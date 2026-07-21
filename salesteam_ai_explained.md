@@ -1,216 +1,39 @@
-# 🧠 SalesTeam AI — Complete Beginner's Guide
-
-> You are building an **AI agent** that helps salespeople at ITech/LSAT know exactly
-> what products to offer to each client, and in what quantities, when they visit them.
-> This guide explains every file, every folder, and every concept — from zero.
-
----
-
-## 🏗️ Part 1 — The Big Picture: What Does This Project Actually Do?
-
-Imagine a salesperson named Ahmed. He visits 10 clients per day. Before the AI:
-- Ahmed had to **remember** what each client bought last time
-- He had to **guess** the right quantity to offer
-- He often forgot products, or suggested things the client doesn't need
-
-After the AI:
-1. Ahmed opens the **SalesTeam Flutter app** on his phone
-2. He selects client "CLT011712" for his next visit
-3. The app **calls this Python project** (via the API)
-4. The AI analyzes 2+ years of that client's purchase history
-5. The AI returns: *"Suggest 10x iPhone 15 cases, 5x Samsung chargers, 3x earbuds"*
-6. Ahmed accepts, modifies, or rejects each suggestion
-7. His reaction is **saved as feedback** to make the AI smarter next time
-
-This Python project is the **brain** behind all of that.
-
----
-
-## 🗂️ Part 2 — The Virtual Environment (`venv/`)
-
-### What is it?
-When you ran `python -m venv venv`, Python created a **private, isolated Python installation** just for this project. Think of it like a clean room in a factory.
-
-```
-Your computer's Python       Your project's Python (venv)
-─────────────────────        ────────────────────────────
-Global Python 3.x            Python 3.x (copy)
-+ random libraries           + ONLY the libraries you need
-  you installed before         (fastapi, pandas, xgboost...)
-  for other projects
-```
-
-### Why do we need it?
-- **Problem without venv**: If you install `pandas==2.2.3` for this project and `pandas==1.5.0` for another project on the same machine → they conflict and break.
-- **Solution**: Each project gets its own isolated environment. Like each recipe gets its own kitchen.
-
-### What's inside `venv/`?
-```
-venv/
-├── Scripts/          ← activate.bat (Windows), python.exe, pip.exe
-├── Lib/site-packages/ ← all installed libraries go here
-└── pyvenv.cfg        ← config: which Python version this venv uses
-```
-
-When you ran `venv\Scripts\activate`, you told your terminal: *"From now on, use THIS Python, not the global one."* That's why you see `(venv)` at the start of your command line.
-
----
-
-## 📁 Part 3 — Project Folder Structure Explained
-
-```
-salesteam_ai/              ← ROOT of the project
-│
-├── .env                   ← Secret keys (passwords, API tokens)
-├── .gitignore             ← List of files Git should NEVER upload
-├── requirements.txt       ← Shopping list of Python libraries
-├── README.md              ← Project documentation (for humans)
-│
-├── data/                  ← All data files
-│   ├── raw/               ← Original Excel files (NEVER modified)
-│   ├── processed/         ← Cleaned/transformed data (CSVs)
-│   └── feedback/          ← Salesperson reactions saved here
-│
-├── models/                ← Trained AI models saved here (.pkl files)
-├── notebooks/             ← Jupyter notebooks for exploration
-│
-└── src/                   ← All Python source code
-    ├── data/              ← LAYER 1: Read and clean data
-    ├── features/          ← LAYER 2: Transform data into AI inputs
-    ├── models/            ← LAYER 2: Train and use AI models
-    ├── services/          ← LAYER 3: Business logic (orchestration)
-    └── api/               ← LAYER 4: HTTP interface (Flutter talks here)
-```
-
-### The 4 Layers (most important concept!)
-
-Think of the project like a **restaurant**:
-
-| Layer | Folder | Role | Restaurant analogy |
-|-------|--------|------|--------------------|
-| 1 | `src/data/` | Read Excel files, clean data | Grocery delivery + washing vegetables |
-| 2 | `src/features/` + `src/models/` | Compute AI features, train models | Chef preparing & cooking |
-| 3 | `src/services/` | Orchestrate everything | Head chef coordinating |
-| 4 | `src/api/` | Expose HTTP endpoints to Flutter | Waiter taking orders & serving |
-
----
-
-## 📄 Part 4 — File-by-File Explanation
-
----
-
-### 📄 `.gitignore` — What Git Should Ignore
-
-```
-venv/           ← Don't upload the virtual environment (too big, 500MB+)
-.env            ← NEVER upload secret API keys to GitHub!
-__pycache__/    ← Python's temporary compiled files (auto-generated)
-*.pyc           ← Compiled Python files (useless to share)
-*.pkl           ← Trained model files (too big for Git)
-data/raw/       ← Raw Excel files (confidential company data)
-data/feedback/  ← Client feedback (confidential)
-```
-
-**Why it matters**: Without this file, you might accidentally push your secret API keys or 200MB of Excel files to GitHub. This file prevents that.
-
----
-
-### 📄 `.env` — Secret Configuration
-
-```bash
-HF_TOKEN=               ← Your HuggingFace account API key
-ANTHROPIC_API_KEY=      ← Claude AI API key (optional)
-NGROK_AUTHTOKEN=        ← For exposing your local API to Flutter
-API_HOST=0.0.0.0        ← Listen on all network interfaces
-API_PORT=8000           ← The API runs on port 8000
-CACHE_TTL=86400         ← Cache AI explanations for 24 hours (86400 seconds)
-RAW_DATA_PATH=data/raw  ← Where to find Excel files
-```
-
-**Why it matters**: You never hardcode secrets in Python files. Instead:
-- The `.env` file holds secrets
-- Python reads them using `python-dotenv` library
-- `.gitignore` prevents `.env` from being committed
-- Your teammate gets a `.env.example` and fills their own values
-
----
-
-### 📄 `requirements.txt` — The Shopping List
-
-This file tells `pip install -r requirements.txt` exactly which libraries to install and which versions.
-
-```
-fastapi==0.115.0       ← The web framework (builds the API)
-uvicorn==0.30.6        ← The server that runs FastAPI
-pandas==2.2.3          ← Library for tables/DataFrames (like Excel in Python)
-numpy==1.26.4          ← Math library (arrays, numbers)
-scikit-learn==1.5.2    ← Classic ML algorithms
-xgboost==2.1.1         ← Gradient boosting (the main classifier)
-lightgbm==4.5.0        ← Another gradient boosting (alternative)
-prophet==1.1.5         ← Facebook's library for time-series forecasting
-scikit-surprise==1.1.4 ← Library for collaborative filtering (SVD)
-huggingface-hub        ← Access to AI models on HuggingFace
-transformers           ← Use pre-trained language models (Mistral, etc.)
-sentence-transformers  ← Convert text to vectors (for product similarity)
-anthropic==0.36.2      ← Claude AI library
-pydantic==2.9.2        ← Data validation (ensures JSON is correct)
-geopy==2.4.1           ← Geography calculations (GPS distances)
-mlflow==2.16.2         ← Track ML experiments (like a lab notebook)
-pytest==8.3.3          ← Run automated tests
-```
-
-**Why pinned versions?** `xgboost==2.1.1` means EXACTLY version 2.1.1. Without the `==`, the library might auto-update and break your code silently.
-
----
-
-### 📄 `README.md` — The Project Manual
-
-Plain text documentation written in Markdown. It explains:
-- What the project does
-- How to install it
-- How to run it
-- What the API endpoints are
-- What data is used
-
-**Rule**: Any developer (or future-you) should be able to understand the project just by reading the README.
-
----
-
-## 📁 Part 5 — `src/data/` — Layer 1: Data Access
-
-These files do ONE job: **get the data and clean it**. No AI, no predictions here.
-
----
-
 ### 📄 `src/data/loader.py` — Reading the Excel Files
 
-This file has 4 functions:
+This file has loading functions for each raw source file. It reads them and renames their columns to standardize them. It does **not** perform any company filtering or cross-table joins anymore.
 
-#### `load_factures()` — Load invoices
+
 ```python
 # Reads the commande_phonesTech Excel file
-# Filters only LSAT company rows
+# Loads all invoice rows without company filters
 # Renames columns to French-friendly names:
 #   No_              → code_facture   (invoice number)
 #   client_code      → code_client    (client ID)
 #   Posting Date     → date_commande  (order date)
 #   Salesperson Code → ref_commercial (salesperson ID)
+
 ```
 
+
 #### `load_lignes()` — Load order lines
+
+
 ```python
 # Reads commande_lines_PhonesTech Excel
-# CRITICAL TRICK: This file has NO "LSAT" in the company column!
-# So we filter by invoice number instead:
-#   → Only keep lines whose Document No_ matches an LSAT invoice
+# Loads all order line rows without company filters.
+# In the corrected dataset, LSAT is correctly labeled in the company column.
 # Renames:
 #   Document No_       → code_facture
 #   Quantity           → quantite
 #   designation_article → designation
 #   Item Category Code  → categorie
+
 ```
 
+
 #### `load_clients()` — Load GPS coordinates
+
+
 ```python
 # Reads client-lat-lng Excel
 # Renames:
@@ -218,9 +41,12 @@ This file has 4 functions:
 #   lat        → latitude
 #   lng        → longitude
 # Note: Only 312 out of 737 clients have GPS coordinates
+
 ```
 
-#### `build_main_table()` — Join everything together
+#### `clean_all()` (in `cleaner.py`) — Clean and save separately
+
+
 ```python
 # This is the MAIN function that:
 # 1. Loads invoices (LSAT only)
@@ -230,7 +56,9 @@ This file has 4 functions:
 # 5. Adds time columns: mois, annee, jour_semaine
 # 6. Removes outliers: keeps only 0 < quantity <= 1000
 # 7. Saves the result to data/processed/lsat_main_table.csv
+
 ```
+
 
 **What a JOIN is** (for beginners):
 ```
@@ -257,19 +85,27 @@ Three cleaning functions called in sequence by `clean()`:
 If the same product appears twice on the same invoice (data entry error), keep only one.
 
 #### `handle_nulls()`
+
+
 ```python
 # code_client or code_article is null → DELETE the row (can't work without these)
 # categorie is null   → replace with "UNKNOWN"
 # designation is null → replace with the product code itself
 # latitude/longitude  → LEAVE as null (not all clients have GPS — that's normal)
+
 ```
 
+
 #### `normalize_text_fields()`
+
+
 ```python
 # "  iPhone " → "iPhone"  (strip whitespace)
 # "smartphones" → "SMARTPHONES"  (uppercase categories)
 # Prevents treating "PHONE" and "Phone" as two different categories
+
 ```
+
 
 ---
 
@@ -306,6 +142,7 @@ Split the orders in 2 halves:
 
 #### Parameter 2 — Seasonality (`compute_seasonality_features`)
 
+
 ```python
 SEASONAL_COEF = {
     1:  0.85,   # January  → slow (post-holidays)
@@ -314,7 +151,9 @@ SEASONAL_COEF = {
     7:  1.25,   # July     → Summer peak (Tunisia specific)
     12: 1.30,   # December → Year-end highest demand
 }
+
 ```
+
 
 A coefficient of `1.30` for December means: multiply the normal quantity by 1.30 → suggest 30% more stock.
 
@@ -431,6 +270,7 @@ New client CLT099 in Tunis suburb
 
 This is the **orchestrator** of all AI models. It's a Python Class:
 
+
 ```python
 class Predictor:
     # Loads ALL models into memory once when the API starts
@@ -451,7 +291,9 @@ class Predictor:
         #   quantity × seasonal_coefficient
         
         # Step 5: Return top N suggestions sorted by confidence
+
 ```
+
 
 ---
 
@@ -491,12 +333,16 @@ For each suggestion, the AI generates a human-readable French explanation:
 3. **Fallback templates** → if API is down, use pre-written French templates
 
 **The cache** (in-memory dictionary):
+
+
 ```python
 _explanation_cache = {
     "abc123": ("Ce client commande régulièrement...", expires_at=tomorrow),
     "def456": ("Nouveau produit lancé récemment...", expires_at=tomorrow),
 }
+
 ```
+
 Cache key = MD5 hash of (client_id + product_code + month)
 
 ---
@@ -538,6 +384,7 @@ This is how Flutter talks to the Python project.
 
 Defines exactly what JSON shapes are accepted and returned. Written with **Pydantic**, which automatically validates incoming data.
 
+
 ```python
 # Flutter sends this:
 RecommendRequest:
@@ -561,13 +408,16 @@ RecommendResponse:
     },
     ...
   ]
+
 ```
+
 
 If Flutter sends wrong data (missing `client_id`), Pydantic automatically rejects it with a clear error message.
 
 ---
 
 ### 📄 `src/api/main.py` — The FastAPI App
+
 
 ```python
 app = FastAPI(title="SalesTeam AI")
@@ -581,7 +431,9 @@ app.include_router(feedback.router,  prefix="/api")  # POST /api/feedback
 app.include_router(admin.router,     prefix="/api")  # GET /health, POST /retrain
 
 # lifespan: runs code at startup (load models) and shutdown (cleanup)
+
 ```
+
 
 When you run `uvicorn src.api.main:app --reload --port 8000`, this starts an HTTP server on port 8000 that Flutter can talk to.
 
@@ -620,11 +472,11 @@ Same pattern. Flutter sends the salesperson's reactions, Python saves them to CS
 ```
 [Excel files in data/raw/]
          ↓ loader.py reads them
-[Raw DataFrame: 187,893 order lines]
+[Raw DataFrame: 78,720 order lines]
          ↓ cleaner.py cleans
-[Clean DataFrame: ~185,000 rows]
+[Clean DataFrame: ~78,530 rows]
          ↓ feature_engineering.py transforms
-[Feature Matrix: ~50,000 rows × 20 features]
+[Feature Matrix: 40,765 rows × 29 features]
          ↓ train_classifier.py learns from
 [Trained XGBoost Classifier → models/classifier_lsat.pkl]
          ↓ train_regressor.py learns from

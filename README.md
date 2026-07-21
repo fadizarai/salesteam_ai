@@ -43,9 +43,9 @@ uvicorn src.api.main:app --reload --port 8000
 
 ## Data
 - LSAT invoices    : ~18,444 invoices (Jan 2024 → Jun 2026)
-- LSAT order lines : ~187,893 lines
-- LSAT clients     : 737 points of sale (312 with GPS)
-- Products         : 1,599 unique articles
+- LSAT order lines : ~78,720 raw lines (~78,530 clean lines)
+- LSAT clients     : 737 points of sale (325 with GPS)
+- Products         : 632 unique articles (in LSAT clean data)
 
 ## Stack
 Python · FastAPI · XGBoost · Prophet · SVD · HuggingFace ·
