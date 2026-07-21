@@ -1,0 +1,169 @@
+import json
+
+notebook_content = {
+    "cells": [
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "# 🚀 SalesTeam AI — Guide Complet & Architecture de la Solution\n",
+                "\n",
+                "## 📌 Présentation Globale du Projet\n",
+                "**SalesTeam AI** est un agent intelligent de recommandation d'ordres d'achat conçu pour l'application mobile Flutter des commerciaux de la filiale **LSAT (ITech)**.\n",
+                "\n",
+                "Lorsqu'un commercial visite un point de vente client, l'agent IA génère automatiquement un **Projet de Commande sur-mesure**, prédisant les produits les plus susceptibles d'être achetés ainsi que les quantités optimales à proposer.\n",
+                "\n",
+                "---\n",
+                "### 🏗️ Architecture du Système (4 Couches)\n",
+                "1. **Layer 1 — Data Ingestion & Cleaning** (`src/data/`) : Chargement des 18 444 factures et 78 530 lignes de commande LSAT, nettoyage et géolocalisation GPS.\n",
+                "2. **Layer 2 — Feature Engineering & Model Training** (`src/models/`) : Calcul des 26 features comportementales et entraînement du classifieur **XGBoost Classifier**.\n",
+                "3. **Layer 3 — Services Logiciel** (`src/services/`) : Inférence du modèle, filtrage par probabilité d'achat et génération d'explications en français.\n",
+                "4. **Layer 4 — API & Frontend Interface** (`src/api/` & `frontend/`) : API REST FastAPI (Endpoints `/recommend`, `/clients`, `/feedback`, `/health`) et Tableau de bord de test interactif en **React (Vite)**.\n"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 📊 1. Traitement des Données & Feature Engineering (Layer 1 & 2)\n",
+                "\n",
+                "### A. Ingestion et Nettoyage (`src/data/cleaner.py`)\n",
+                "- **Volume de données** : ~78,530 lignes de commande LSAT nettoyées (période Jan 2024 -> Juin 2026).\n",
+                "- **Normalisation** : Suppression des doublons de factures, gestion des valeurs nulles (catégories inconnues -> `UNKNOWN`), et jointure avec les coordonnées GPS (325 points de vente géolocalisés).\n",
+                "\n",
+                "### B. Matrice de Features & Variable Cible (`src/models/target_builder.py`)\n",
+                "Le dataset d'entraînement `data/processed/training_set.csv` rassemble **153 320 lignes** et **26 features** :\n",
+                "- **Historique d'Achat** : `frequency`, `recency_days`, `avg_qty`, `std_qty`, `min_qty`, `max_qty`, `total_qty`.\n",
+                "- **Comportement Client** : `client_total_products`, `client_total_invoices`, `client_avg_basket_size`, `days_since_first_order`.\n",
+                "- **Saisonnalité & Contexte** : `current_month_coef`, `avg_seasonal_coef`, `best_month`, `trend`.\n",
+                "- **Produit & Géographie** : `categorie_encoded`, `is_bulk_product`, `is_new_product`, `has_gps`, `latitude`, `longitude`.\n",
+                "- **Variable Cible (`target_bought`)** : `1` si le client a acheté l'article lors de la visite, `0` sinon.\n"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 🤖 2. Entraînement & Performances du Modèle XGBoost (`src/models/train_classifier.py`)\n",
+                "\n",
+                "Le script [train_classifier.py](file:///c:/Users/Fedy%20Zarai/.gemini/antigravity-ide/scratch/salesteam_ai/src/models/train_classifier.py) exécute le pipeline d'entraînement du modèle **XGBoost Classifier**.\n",
+                "\n",
+                "```python",
+                "# Pipeline d'entraînement exécuté :",
+                "# 1. Chargement de data/processed/training_set.csv (153 320 lignes x 31 colonnes)",
+                "# 2. Encodage catégoriel de 'categorie' via LabelEncoder -> sauvegardé dans encoder_categorie.joblib",
+                "# 3. Stratified Train/Test Split (80% train / 20% test = 30 664 lignes de test)",
+                "# 4. Prise en compte du déséquilibre des classes : scale_pos_weight = 8.87",
+                "# 5. Entraînement de XGBClassifier(n_estimators=150, max_depth=6, learning_rate=0.05)",
+                "# 6. Sauvegarde des artifacts dans src/models/ et models/",
+                "```\n",
+                "\n",
+                "### 📈 Résultats de l'Évaluation du Modèle :\n",
+                "```text\n",
+                "============================================================\n",
+                "      RÉSULTATS DE L'ÉVALUATION DU CLASSIFIEUR XGBOOST\n",
+                "============================================================\n",
+                "              precision    recall  f1-score   support\n",
+                "\n",
+                "           0       1.00      1.00      1.00     27557\n",
+                "           1       0.98      1.00      0.99      3107\n",
+                "\n",
+                "    accuracy                           1.00     30664\n",
+                "   macro avg       0.99      1.00      0.99     30664\n",
+                "weighted avg       1.00      1.00      1.00     30664\n",
+                "\n",
+                "ROC-AUC Score: 1.0000\n",
+                "\n",
+                "Matrice de Confusion :\n",
+                "[[27502    55]\n",
+                " [    3  3104]]\n",
+                "============================================================\n",
+                "```\n"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 🌐 3. Architecture API Backend FastAPI (`src/api/` & `src/services/`)\n",
+                "\n",
+                "L'API FastAPI sert de passerelle temps réel pour communiquer avec l'application Flutter et l'interface React.\n",
+                "\n",
+                "### Endpoints Implémentés :\n",
+                "- **`POST /api/recommend`** ([recommend.py](file:///c:/Users/Fedy%20Zarai/.gemini/antigravity-ide/scratch/salesteam_ai/src/api/routes/recommend.py)) :\n",
+                "  - Reçoit un `client_id` + configuration IA.\n",
+                "  - Appelle [recommendation.py](file:///c:/Users/Fedy%20Zarai/.gemini/antigravity-ide/scratch/salesteam_ai/src/services/recommendation.py) pour exécuter l'inférence XGBoost.\n",
+                "  - Calcule la probabilité d'achat ($0\%$ à $100\%$), filtre les suggestions prioritaires et génère l'explication explicite en français.\n",
+                "- **`GET /api/clients`** ([clients.py](file:///c:/Users/Fedy%20Zarai/.gemini/antigravity-ide/scratch/salesteam_ai/src/api/routes/clients.py)) :\n",
+                "  - Retourne la liste des clients disponibles avec leurs statistiques d'achat pour alimenter les composants de sélection.\n",
+                "- **`POST /api/feedback`** ([feedback.py](file:///c:/Users/Fedy%20Zarai/.gemini/antigravity-ide/scratch/salesteam_ai/src/api/routes/feedback.py)) :\n",
+                "  - Enregistre les réactions du commercial (articles acceptés, refusés ou quantités modifiées) dans `data/feedback/feedback_YYYY-MM.csv`.\n",
+                "- **`GET /health` & `POST /api/retrain`** ([admin.py](file:///c:/Users/Fedy%20Zarai/.gemini/antigravity-ide/scratch/salesteam_ai/src/api/routes/admin.py)) :\n",
+                "  - Vérification de santé du serveur et déclenchement automatique du réentraînement du modèle.\n"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## ⚛️ 4. Interface Utilisateur de Test en React (`frontend/`)\n",
+                "\n",
+                "Nous avons construit un tableau de bord web interactif en **React (Vite)** avec un design **Glassmorphism Sombre** moderne :\n",
+                "\n",
+                "- **Sélecteur de Clients** : Puces d'accès rapide (`CLT009160`, `CLT010283`, `CLT011029`, etc.) et recherche personnalisée.\n",
+                "- **Panneau de Contrôle IA** : Ajustement du nombre maximal de suggestions souhaitées (de 3 à 15).\n",
+                "- **Cartes KPI en Temps Réel** : Nombre d'articles retenus, nombre d'articles à Priorité Haute (&gt;80%), et confiance moyenne IA.\n",
+                "- **Tableau \"Projet de Commande\"** :\n",
+                "  - Barres de probabilité couleur avec pourcentage de confiance d'achat.\n",
+                "  - Badges de priorité (**Priorité Haute** / **Recommandé**).\n",
+                "  - Quantités suggérées modifiables.\n",
+                "  - Explications automatiques en français.\n",
+                "  - Boutons interactifs (Accepter / Rejeter) pour simuler la validation du commercial sur le terrain.\n"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 🛠️ 5. Guide d'Utilisation & Commandes Utiles\n",
+                "\n",
+                "### A. Lancer le Backend FastAPI :\n",
+                "```powershell\n",
+                "# Activer le venv et démarrer Uvicorn sur le port 8000\n",
+                ".\\venv\\Scripts\\Activate.ps1\n",
+                "python -m uvicorn src.api.main:app --port 8000 --reload\n",
+                "```\n",
+                "\n",
+                "### B. Lancer l'Interface Web React :\n",
+                "```powershell\n",
+                "cd frontend\n",
+                "npm run dev\n",
+                "# Accès navigateur : http://localhost:5173/\n",
+                "```\n",
+                "\n",
+                "### C. Test Rapide d'Inférence en Ligne de Commande :\n",
+                "```powershell\n",
+                "# Générer un projet de commande dans le terminal pour un client spécifique\n",
+                "python recommend_for_client.py CLT009160\n",
+                "```\n",
+                "\n",
+                "### D. Réentraîner le Modèle :\n",
+                "```powershell\n",
+                "python src/models/train_classifier.py\n",
+                "```\n"
+            ]
+        }
+    ],
+    "metadata": {
+        "language_info": {
+            "name": "python"
+        }
+    },
+    "nbformat": 4,
+    "nbformat_minor": 2
+}
+
+with open("salesteam_ai_explained.ipynb", "w", encoding="utf-8") as f:
+    json.dump(notebook_content, f, indent=2, ensure_ascii=False)
+
+print("Updated salesteam_ai_explained.ipynb successfully.")

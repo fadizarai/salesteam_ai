@@ -8,107 +8,83 @@ Workflow:
 3. Append to data/feedback/feedback_YYYY-MM.csv (monthly files)
 4. Compute acceptance rate and modification statistics
 5. Return a summary for logging
-
-The feedback CSV schema is:
-    submitted_at, client_id, commercial_id, code_facture,
-    code_article, accepte, quantite_finale, modifie,
-    date_visite_mois
-
-Retraining:
-    load_feedback_for_retraining() reads all feedback CSVs,
-    joins with feature matrix and returns a dataset suitable
-    for fine-tuning the classifier and regressor.
 """
 
-import pandas as pd
+import os
 import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
+import pandas as pd
+
+from src.api.schemas import FeedbackRequest, FeedbackResponse
 
 logger = logging.getLogger(__name__)
 
-FEEDBACK_DIR = "data/feedback"
+FEEDBACK_DIR = Path("data/feedback")
 
 
-def save_feedback(request: object) -> dict:
+def save_feedback(request: FeedbackRequest) -> FeedbackResponse:
     """
     Save sales rep feedback from a FeedbackRequest to CSV.
-
     Appends to the monthly CSV file (creates it if not exists).
-    One row per FeedbackItem in the request.
-
-    Args:
-        request: FeedbackRequest Pydantic model
-                 (from src.api.schemas)
-
-    Returns:
-        Summary dict: {nb_items, nb_accepted, nb_modified,
-                       acceptance_rate, file_path}
     """
-    raise NotImplementedError("To be implemented")
+    FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
+    
+    now = datetime.now()
+    monthly_filename = f"feedback_{now.strftime('%Y-%m')}.csv"
+    file_path = FEEDBACK_DIR / monthly_filename
+
+    rows = []
+    for item in request.items:
+        rows.append({
+            "submitted_at": request.submitted_at or now.isoformat(),
+            "client_id": request.client_id,
+            "commercial_id": request.commercial_id,
+            "code_facture": request.code_facture or "",
+            "code_article": item.code_article,
+            "accepte": item.accepte,
+            "quantite_finale": item.quantite_finale,
+            "modifie": item.modifie,
+            "date_visite_mois": now.strftime("%Y-%m"),
+        })
+
+    df_new = pd.DataFrame(rows)
+
+    if file_path.exists():
+        df_new.to_csv(file_path, mode="a", header=False, index=False)
+    else:
+        df_new.to_csv(file_path, mode="w", header=True, index=False)
+
+    logger.info(f"Saved {len(rows)} feedback items to {file_path}")
+
+    return FeedbackResponse(
+        status="ok",
+        message=f"Feedback recorded successfully ({len(rows)} items)",
+        nb_items=len(rows),
+    )
 
 
 def load_feedback_for_retraining(
-    feedback_dir: str = FEEDBACK_DIR,
+    feedback_dir: str = str(FEEDBACK_DIR),
     min_date: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Load all feedback CSV files and merge them into
     a single DataFrame for model retraining.
-
-    Args:
-        feedback_dir: directory containing feedback CSV files
-        min_date: optional ISO date string to filter feedback
-                  (only load feedback after this date)
-
-    Returns:
-        Combined DataFrame with all feedback records,
-        sorted by submitted_at ascending
     """
-    raise NotImplementedError("To be implemented")
+    p = Path(feedback_dir)
+    if not p.exists():
+        return pd.DataFrame()
 
+    csv_files = list(p.glob("feedback_*.csv"))
+    if not csv_files:
+        return pd.DataFrame()
 
-def compute_feedback_stats(
-    feedback_df: pd.DataFrame,
-) -> dict:
-    """
-    Compute aggregate statistics over a feedback DataFrame.
+    dfs = [pd.read_csv(f) for f in csv_files]
+    combined_df = pd.concat(dfs, ignore_index=True)
 
-    Stats computed:
-    - total_feedbacks: total number of items
-    - acceptance_rate: % of items accepted without modification
-    - modification_rate: % of items accepted with modification
-    - rejection_rate: % of items rejected
-    - top_accepted_products: top 10 most accepted products
-    - top_rejected_products: top 10 most rejected products
+    if min_date and "submitted_at" in combined_df.columns:
+        combined_df = combined_df[combined_df["submitted_at"] >= min_date]
 
-    Args:
-        feedback_df: DataFrame from load_feedback_for_retraining()
-
-    Returns:
-        dict of stat name → value
-    """
-    raise NotImplementedError("To be implemented")
-
-
-def prepare_retraining_dataset(
-    feedback_df: pd.DataFrame,
-    feature_matrix: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
-    """
-    Join feedback with feature matrix to produce a
-    training dataset for model fine-tuning.
-
-    Label logic:
-    - classifier label: accepte (1=accepted, 0=rejected)
-    - regressor label:  quantite_finale (only for accepted items)
-
-    Args:
-        feedback_df: loaded feedback DataFrame
-        feature_matrix: current feature matrix
-
-    Returns:
-        Tuple of (X, y_classifier, y_regressor)
-    """
-    raise NotImplementedError("To be implemented")
+    return combined_df.sort_values(by="submitted_at", ascending=True)

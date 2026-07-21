@@ -6,7 +6,9 @@ Records the sales rep reaction after order validation.
 
 import logging
 from fastapi import APIRouter, HTTPException
+
 from src.api.schemas import FeedbackRequest, FeedbackResponse
+from src.services.feedback import save_feedback
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -18,21 +20,15 @@ async def record_feedback(request: FeedbackRequest):
     Record feedback from the sales rep.
     Stores which products were accepted, rejected or modified
     and the final quantities chosen.
-    This data will be used to retrain models weekly.
+    This data is saved to disk and will be used to retrain models weekly.
     """
     logger.info(
         f"Feedback received: client={request.client_id} "
         f"items={len(request.items)}"
     )
     try:
-        # TODO: call feedback service
-        # from src.services.feedback import save_feedback
-        # save_feedback(request)
-        raise NotImplementedError(
-            "Feedback service not yet implemented."
-        )
-    except NotImplementedError as e:
-        raise HTTPException(status_code=501, detail=str(e))
+        response = save_feedback(request)
+        return response
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Error saving feedback: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

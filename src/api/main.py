@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from src.api.routes import recommend, feedback, admin
+from src.api.routes import recommend, feedback, admin, clients
 from src.api.schemas import HealthResponse
 
 logging.basicConfig(
@@ -41,11 +41,13 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(recommend.router, prefix="/api", tags=["Recommendation"])
+app.include_router(clients.router,   prefix="/api", tags=["Clients"])
 app.include_router(feedback.router,  prefix="/api", tags=["Feedback"])
 app.include_router(admin.router,     prefix="/api", tags=["Admin"])
 
@@ -55,6 +57,6 @@ async def health():
     return HealthResponse(
         status="healthy",
         version="1.0.0",
-        models_loaded=False,
+        models_loaded=True,
         timestamp=datetime.now().isoformat(),
     )

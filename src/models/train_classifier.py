@@ -1,224 +1,168 @@
 """
-LAYER 2 — AI / Machine Learning
-Train XGBoost binary classifier to predict which products
-to recommend for a given client.
+Script d'entraînement du classifieur XGBoost (Layer 2 — AI / ML)
 
-Input features  : training_set.csv from target_builder.py
-Output          : trained XGBoost classifier
-Saved artifact  : models/classifier_lsat.pkl
+Étapes exactes suivies :
+Étape 1 — Charger le training_set (data/processed/training_set.csv)
+Étape 2 — Encoder la variable catégorielle 'categorie' avec LabelEncoder et sauvegarder l'encodeur avec joblib
+Étape 3 — Préparer les matrices X (features) et y (target_bought) en supprimant les identifiants et cibles
+Étape 4 — Diviser le dataset en ensembles d'entraînement et de test (Stratified Train/Test Split)
+Étape 5 — Calculer le ratio de déséquilibre des classes (scale_pos_weight)
+Étape 6 — Entraîner le modèle XGBoost Classifier
+Étape 7 — Évaluer les performances (Classification Report, ROC-AUC Score)
+Étape 8 — Sauvegarder le modèle et l'encodeur pour la production
 """
 
+import os
+import logging
+from pathlib import Path
 import pandas as pd
 import numpy as np
-import logging
-import pickle
-from pathlib import Path
+import joblib
+from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix
+# pyrefly: ignore [missing-import]
 import xgboost as xgb
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def prepare_classifier_dataset(
-    training_set_path: str = "data/processed/training_set.csv",
+def run_training_pipeline(
+    data_path: str = "data/processed/training_set.csv",
+    model_output_path: str = "src/models/classifier_lsat.joblib",
+    encoder_output_path: str = "src/models/encoder_categorie.joblib",
     test_size: float = 0.2,
-    random_state: int = 42,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    random_state: int = 42
+):
     """
-    Load the training set, separate features and target, and split into train/test sets.
-
-    Args:
-        training_set_path: Path to the generated training set CSV.
-        test_size: Proportion of the dataset to include in the test split.
-        random_state: Seed for reproducibility.
-
-    Returns:
-        X_train, X_test, y_train, y_test
+    Exécute le pipeline complet d'entraînement du classifieur XGBoost.
     """
-    logger.info(f"Loading training set from {training_set_path}...")
-    df = pd.read_csv(training_set_path)
-
-    # 1. Separate target and features
-    y = df["target_bought"]
+    # =========================================================================
+    # Étape 1 — Charger le training_set
+    # =========================================================================
+    logger.info(f"Étape 1: Chargement des données depuis {data_path}...")
+    if not os.path.exists(data_path):
+        raise FileNotFoundError(f"Le fichier {data_path} n'existe pas. Veuillez exécuter target_builder.py d'abord.")
     
-    # Drop identifier columns and targets
-    cols_to_drop = [
-        "code_client",
-        "code_article",
-        "designation",
-        "target_qty",
-        "target_bought"
-    ]
-    X = df.drop(columns=cols_to_drop, errors="ignore")
+    df = pd.read_csv(data_path)
+    logger.info(f"Données chargées avec succès : {df.shape[0]} lignes, {df.shape[1]} colonnes.")
 
-    # 2. Preprocess data types for XGBoost
-    # Convert booleans to int (0/1)
+    # =========================================================================
+    # Étape 2 — Encoder la colonne 'categorie'
+    # =========================================================================
+    logger.info("Étape 2: Encodage de la colonne 'categorie' avec LabelEncoder...")
+    le_categorie = LabelEncoder()
+    
+    # Vérification si 'categorie' est présente dans le dataframe
+    if "categorie" in df.columns:
+        df["categorie"] = df["categorie"].fillna("UNKNOWN").astype(str)
+        df["categorie_encoded"] = le_categorie.fit_transform(df["categorie"])
+        logger.info(f"Nombre de catégories uniques encodées : {len(le_categorie.classes_)}")
+    else:
+        logger.warning("La colonne 'categorie' n'a pas été trouvée dans le dataframe.")
+
+    # =========================================================================
+    # Étape 3 — Dropper les colonnes non pertinentes et définir X et y
+    # =========================================================================
+    logger.info("Étape 3: Séparation des features (X) et de la cible (y)...")
+    cols_to_drop = [
+        "code_client", "code_article", "designation",
+        "categorie",              # On garde categorie_encoded à la place
+        "target_qty", "target_bought"
+    ]
+    
+    existing_cols_to_drop = [col for col in cols_to_drop if col in df.columns]
+    X = df.drop(columns=existing_cols_to_drop)
+    y = df["target_bought"]
+
+    # Convertir d'éventuelles colonnes booléennes en entiers (0/1)
     bool_cols = X.select_dtypes(include=["bool"]).columns
     for col in bool_cols:
         X[col] = X[col].astype(int)
 
-    # Convert categorical string columns to category type
-    cat_cols = X.select_dtypes(include=["object"]).columns
-    for col in cat_cols:
-        logger.info(f"Converting column '{col}' to category type")
-        X[col] = X[col].astype("category")
+    logger.info(f"Dimensions de la matrice de features X : {X.shape}")
+    logger.info(f"Distribution de la cible y : {y.value_counts().to_dict()}")
 
-    logger.info(f"Features list: {list(X.columns)}")
-    logger.info(f"Feature matrix shape: {X.shape}")
-
-    # 3. Stratified split to maintain label distribution
+    # =========================================================================
+    # Étape 4 — Split Train / Test
+    # =========================================================================
+    logger.info(f"Étape 4: Séparation Train/Test ({int((1-test_size)*100)}% train / {int(test_size*100)}% test)...")
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_size, stratify=y, random_state=random_state
     )
+    logger.info(f"Taille de X_train : {X_train.shape}, X_test : {X_test.shape}")
 
-    logger.info(f"Train shape: {X_train.shape}, Test shape: {X_test.shape}")
-    return X_train, X_test, y_train, y_test
+    # =========================================================================
+    # Étape 5 — Calculer le déséquilibre des classes pour scale_pos_weight
+    # =========================================================================
+    logger.info("Étape 5: Calcul du ratio d'imbalance (scale_pos_weight)...")
+    num_negatives = (y_train == 0).sum()
+    num_positives = (y_train == 1).sum()
+    scale_pos_weight = num_negatives / max(1, num_positives)
+    logger.info(f"Nombre de classe 0 (Non-achat) : {num_negatives}")
+    logger.info(f"Nombre de classe 1 (Achat)     : {num_positives}")
+    logger.info(f"Ratio scale_pos_weight calculé : {scale_pos_weight:.2f}")
 
+    # =========================================================================
+    # Étape 6 — Entraîner le modèle XGBoost Classifier
+    # =========================================================================
+    logger.info("Étape 6: Entraînement du modèle XGBoost Classifier...")
+    model = xgb.XGBClassifier(
+        scale_pos_weight=scale_pos_weight,
+        eval_metric="logloss",
+        random_state=random_state,
+        n_estimators=150,
+        max_depth=6,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8
+    )
+    model.fit(X_train, y_train)
+    logger.info("Entraînement terminé avec succès !")
 
-def train_classifier(
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    X_val: pd.DataFrame = None,
-    y_val: pd.Series = None,
-    params: dict = None,
-    save_path: str = "models/classifier_lsat.pkl",
-) -> xgb.XGBClassifier:
-    """
-    Train and save an XGBoost binary classifier.
+    # =========================================================================
+    # Étape 7 — Évaluer le modèle sur l'ensemble de test
+    # =========================================================================
+    logger.info("Étape 7: Évaluation des performances du modèle...")
+    y_pred = model.predict(X_test)
+    y_proba = model.predict_proba(X_test)[:, 1]
 
-    Args:
-        X_train: Training features.
-        y_train: Training target labels.
-        X_val: Optional validation features.
-        y_val: Optional validation targets.
-        params: XGBoost hyperparameters dict.
-        save_path: Filepath to save the pickled model.
-
-    Returns:
-        Trained XGBoost classifier.
-    """
-    logger.info("Initializing XGBoost classifier...")
-
-    # Default parameters optimized for tabular recommendation classification
-    default_params = {
-        "n_estimators": 150,
-        "max_depth": 6,
-        "learning_rate": 0.05,
-        "subsample": 0.8,
-        "colsample_bytree": 0.8,
-        "eval_metric": "logloss",
-        "random_state": 42,
-        "enable_categorical": True,  # Allows native category support
-    }
-
-    if params:
-        default_params.update(params)
-
-    # Handle class imbalance (62% non-purchase vs 38% purchase)
-    # scale_pos_weight = sum(negative) / sum(positive)
-    neg_count = (y_train == 0).sum()
-    pos_count = (y_train == 1).sum()
-    scale_pos_weight = neg_count / max(1, pos_count)
-    default_params["scale_pos_weight"] = scale_pos_weight
-    logger.info(f"Calculated scale_pos_weight: {scale_pos_weight:.2f}")
-
-    model = xgb.XGBClassifier(**default_params)
-
-    # Fit with early stopping if validation set is provided
-    if X_val is not None and y_val is not None:
-        logger.info("Training with early stopping...")
-        model.fit(
-            X_train,
-            y_train,
-            eval_set=[(X_val, y_val)],
-            verbose=10,
-        )
-    else:
-        logger.info("Training on full train split...")
-        model.fit(X_train, y_train, verbose=True)
-
-    # Save to disk
-    if save_path:
-        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-        with open(save_path, "wb") as f:
-            pickle.dump(model, f)
-        logger.info(f"Model saved to {save_path}")
-
-    return model
-
-
-def evaluate_classifier(
-    model: xgb.XGBClassifier,
-    X_test: pd.DataFrame,
-    y_test: pd.Series,
-) -> dict:
-    """
-    Evaluate the classifier with standard binary metrics.
-
-    Args:
-        model: Trained XGBoost classifier.
-        X_test: Test features.
-        y_test: Test labels.
-
-    Returns:
-        dict of computed metrics
-    """
-    logger.info("Evaluating model on test set...")
-    
-    preds = model.predict(X_test)
-    probs = model.predict_proba(X_test)[:, 1]
-
-    # Calculate metrics
-    report = classification_report(y_test, preds)
-    auc = roc_auc_score(y_test, probs)
-    cm = confusion_matrix(y_test, preds)
+    auc_score = roc_auc_score(y_test, y_proba)
+    report_text = classification_report(y_test, y_pred)
+    cm = confusion_matrix(y_test, y_pred)
 
     print("\n" + "=" * 60)
-    print("CLASSIFICATION REPORT")
+    print("      RÉSULTATS DE L'ÉVALUATION DU CLASSIFIEUR XGBOOST")
     print("=" * 60)
-    print(report)
-    print(f"ROC-AUC Score: {auc:.4f}")
-    print("\nConfusion Matrix:")
+    print(report_text)
+    print(f"ROC-AUC Score: {auc_score:.4f}")
+    print("\nMatrice de Confusion :")
     print(cm)
     print("=" * 60 + "\n")
 
-    return {
-        "auc": auc,
-        "confusion_matrix": cm,
-    }
+    # =========================================================================
+    # Étape 8 — Sauvegarder le modèle et l'encodeur
+    # =========================================================================
+    logger.info("Étape 8: Sauvegarde du modèle et de l'encodeur...")
+    
+    Path(model_output_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(encoder_output_path).parent.mkdir(parents=True, exist_ok=True)
+    
+    joblib.dump(model, model_output_path)
+    joblib.dump(le_categorie, encoder_output_path)
+    
+    root_model_path = "models/classifier_lsat.joblib"
+    root_encoder_path = "models/encoder_categorie.joblib"
+    Path(root_model_path).parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(model, root_model_path)
+    joblib.dump(le_categorie, root_encoder_path)
 
+    logger.info(f"Modèle sauvegardé dans : {model_output_path} (et {root_model_path})")
+    logger.info(f"Encodeur sauvegardé dans : {encoder_output_path} (et {root_encoder_path})")
 
-def load_classifier(path: str = "models/classifier_lsat.pkl") -> xgb.XGBClassifier:
-    """
-    Load a trained classifier from disk.
-
-    Args:
-        path: Path to the .pkl file.
-
-    Returns:
-        Trained XGBoost classifier.
-    """
-    logger.info(f"Loading classifier from {path}...")
-    with open(path, "rb") as f:
-        model = pickle.load(f)
-    return model
+    return model, le_categorie
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-
-    # 1. Prepare data
-    X_train, X_test, y_train, y_test = prepare_classifier_dataset()
-
-    # 2. Train model
-    model = train_classifier(
-        X_train=X_train,
-        y_train=y_train,
-        X_val=X_test,
-        y_val=y_test,
-        save_path="models/classifier_lsat.pkl"
-    )
-
-    # 3. Evaluate model
-    evaluate_classifier(model, X_test, y_test)
+    run_training_pipeline()
