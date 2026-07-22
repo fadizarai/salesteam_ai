@@ -1,0 +1,40 @@
+{
+  "trained_at": "2026-07-22T13:12:54.848423",
+  "feature_columns": [
+    "avg_qty",
+    "std_qty",
+    "min_qty",
+    "max_qty",
+    "total_qty",
+    "frequency",
+    "last_qty",
+    "recency_days",
+    "avg_delay_days",
+    "recency_relative",
+    "trend",
+    "company_encoded",
+    "current_month_coef",
+    "avg_seasonal_coef",
+    "best_month",
+    "has_gps",
+    "latitude",
+    "longitude",
+    "is_bulk_product",
+    "nb_clients",
+    "days_since_first_order",
+    "is_new_product",
+    "client_total_products",
+    "client_total_invoices",
+    "client_avg_basket_size",
+    "categorie_encoded"
+  ],
+  "n_features": 26,
+  "best_iteration": 355,
+  "scale_pos_weight": 9.08762196288502,
+  "metrics": {
+    "roc_auc": 0.9999980242798563,
+    "pr_auc": 0.9999837784840376
+  },
+  "train_clients": 515,
+  "test_clients": 148
+}
