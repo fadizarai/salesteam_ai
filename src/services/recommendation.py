@@ -4,12 +4,13 @@ Orchestrates the full recommendation pipeline.
 
 Workflow:
 1. Load pre-computed feature matrix from dataset (data/processed/training_set.csv)
-2. Load XGBoost Classifier model + Category LabelEncoder
+2. Load XGBoost Classifier + XGBoost Regressor + Category LabelEncoder
 3. Filter products for the requested client_id
-4. Run predict_proba() -> probabilities
+4. Run predict_proba() -> purchase probabilities (classifier)
 5. Filter by threshold / nb_suggestions
-6. Generate human-readable French explanations
-7. Return RecommendResponse
+6. Run predict() -> suggested quantities (regressor, clip + round to int)
+7. Generate human-readable French explanations
+8. Return RecommendResponse
 """
 
 import os
@@ -30,16 +31,18 @@ from src.api.schemas import (
 logger = logging.getLogger(__name__)
 
 MODEL_PATH = "src/models/classifier_lsat.joblib"
+REGRESSOR_PATH = "src/models/regressor_lsat.joblib"
 ENCODER_PATH = "src/models/encoder_categorie.joblib"
 DATA_PATH = "data/processed/training_set.csv"
 
 _model = None
+_regressor = None
 _encoder = None
 _df_data = None
 
 
 def _get_artifacts():
-    global _model, _encoder
+    global _model, _regressor, _encoder
     if _model is None:
         if not os.path.exists(MODEL_PATH):
             # Fallback to models/ root
@@ -53,7 +56,25 @@ def _get_artifacts():
         else:
             _model = joblib.load(MODEL_PATH)
             _encoder = joblib.load(ENCODER_PATH)
-    return _model, _encoder
+
+    if _regressor is None:
+        # Regressor is optional — graceful fallback to avg_qty if not found
+        alt_regressor = "models/regressor_lsat.joblib"
+        if os.path.exists(REGRESSOR_PATH):
+            _regressor = joblib.load(REGRESSOR_PATH)
+            logger.info("XGBoost Regressor loaded.")
+        elif os.path.exists(alt_regressor):
+            _regressor = joblib.load(alt_regressor)
+            logger.info("XGBoost Regressor loaded from fallback path.")
+        else:
+            logger.warning(
+                f"Regressor not found at {REGRESSOR_PATH}. "
+                "Quantity will fall back to ceil(avg_qty). "
+                "Run src/models/train_regressor.py to enable AI quantities."
+            )
+            _regressor = None
+
+    return _model, _regressor, _encoder
 
 
 def _get_dataset():
@@ -92,7 +113,7 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
     """
     Full recommendation pipeline: features -> predictions -> explanations.
     """
-    model, encoder = _get_artifacts()
+    model, regressor, encoder = _get_artifacts()
     df_all = _get_dataset()
 
     client_id = request.client_id
@@ -132,6 +153,17 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
     for col in X.select_dtypes(include=["bool"]).columns:
         X[col] = X[col].astype(int)
 
+    # ── Regressor: predict quantities for all rows now, reuse for candidates ──
+    regressor_qty: np.ndarray | None = None
+    if regressor is not None:
+        try:
+            raw_qty = regressor.predict(X)
+            regressor_qty = np.clip(np.round(raw_qty), 1, None).astype(int)
+            df_client["regressor_qty"] = regressor_qty
+        except Exception as exc:
+            logger.warning(f"Regressor prediction failed ({exc}). Falling back to avg_qty.")
+            regressor_qty = None
+
     # XGBoost Inference
     probabilities = model.predict_proba(X)[:, 1]
     df_client["probabilite_achat"] = probabilities
@@ -156,23 +188,34 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
         prob = float(row["probabilite_achat"])
         recency = float(row.get("recency_days", 30))
         freq = int(row.get("frequency", 1))
-        last_qty = float(row.get("last_qty", 1.0))
         avg_qty = float(row.get("avg_qty", 1.0))
         designation = str(row["designation"])
         cat = str(row["categorie"])
 
-        # Suggested quantity logic
-        sugg_qty = int(np.ceil(avg_qty))
-        if sugg_qty < 1:
-            sugg_qty = 1
+        # ── Quantity: use regressor prediction if available, else avg_qty ──
+        if "regressor_qty" in row and pd.notna(row["regressor_qty"]):
+            sugg_qty = max(1, int(row["regressor_qty"]))
+            qty_source = "IA"
+        else:
+            sugg_qty = max(1, int(np.ceil(avg_qty)))
+            qty_source = "historique"
 
         # Explanation generation
         if prob >= 0.85:
-            explication = f"Produit phare ({cat}) très fréquemment acheté ({freq} fois). Récence révisée à {int(recency)}j."
+            explication = (
+                f"Produit phare ({cat}) — acheté {freq} fois par ce client. "
+                f"Quantité suggérée par l'IA : {sugg_qty} unités (récence : {int(recency)}j)."
+            )
         elif prob >= 0.60:
-            explication = f"Demande régulière observée pour ce client. Quantité moyenne recommandée : {sugg_qty} unités."
+            explication = (
+                f"Demande régulière observée. "
+                f"Quantité recommandée ({qty_source}) : {sugg_qty} unités."
+            )
         else:
-            explication = f"Proposition de réassort basée sur la saisonnalité et la catégorie {cat}."
+            explication = (
+                f"Proposition de réassort basée sur la saisonnalité et la catégorie {cat}. "
+                f"Quantité estimée : {sugg_qty} unités."
+            )
 
         is_new = bool(row.get("is_new_product", False))
 
