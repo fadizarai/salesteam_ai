@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-07-22T13:12:54.848423",
+  "trained_at": "2026-07-27T14:02:10.233844",
   "feature_columns": [
     "avg_qty",
     "std_qty",
