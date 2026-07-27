@@ -200,24 +200,23 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
             sugg_qty = max(1, int(np.ceil(avg_qty)))
             qty_source = "historique"
 
-        # Explanation generation
-        if prob >= 0.85:
-            explication = (
-                f"Produit phare ({cat}) — acheté {freq} fois par ce client. "
-                f"Quantité suggérée par l'IA : {sugg_qty} unités (récence : {int(recency)}j)."
-            )
-        elif prob >= 0.60:
-            explication = (
-                f"Demande régulière observée. "
-                f"Quantité recommandée ({qty_source}) : {sugg_qty} unités."
-            )
-        else:
-            explication = (
-                f"Proposition de réassort basée sur la saisonnalité et la catégorie {cat}. "
-                f"Quantité estimée : {sugg_qty} unités."
-            )
-
         is_new = bool(row.get("is_new_product", False))
+
+        # Explanation generation
+        from src.services.explanation import explain_suggestion
+        explication = explain_suggestion(
+            client_id=client_id,
+            code_article=str(row["code_article"]),
+            designation=designation,
+            categorie=cat,
+            quantite_suggeree=sugg_qty,
+            score_confiance=prob,
+            recency_days=int(recency),
+            frequency=freq,
+            trend=float(row.get("trend", 0)),
+            is_new_product=is_new,
+        )
+
 
         suggestions.append(
             ProductSuggestion(
