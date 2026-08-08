@@ -15,17 +15,7 @@ const API_BASE_URL = 'http://127.0.0.1:8000/api';
 
 const COMPANIES = ['LSAT', 'NEWTECH', 'ONETEL'];
 
-const CATEGORIES = [
-  { id: 'all', icon: '🛒', name: 'Tous' },
-  { id: 'GSM NOKIA', icon: '📱', name: 'Nokia' },
-  { id: 'GSM SAMSUNG', icon: '📱', name: 'Samsung' },
-  { id: 'GSM XIAOMI', icon: '📱', name: 'Redmi' },
-  { id: 'ACCESSOIRES', icon: '🔋', name: 'Accessoires' },
-  { id: 'RESEAU', icon: '📡', name: 'Réseau' },
-  { id: 'INFORMATIQUE', icon: '💻', name: 'Informatique' },
-  { id: 'RECHARGE', icon: '🔌', name: 'Recharge' },
-  { id: 'ELECTRONIQUE', icon: '📺', name: 'Électronique' },
-];
+
 
 const DEFAULT_PRESET_CLIENTS = [
   { id: 'CLT091206', label: 'CLT091206' },
@@ -45,7 +35,6 @@ const AI_TOGGLES = [
 
 export default function App() {
   const [company, setCompany] = useState('LSAT');
-  const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedClient, setSelectedClient] = useState('CLT091206');
   const [searchQuery, setSearchQuery] = useState('');
   const [availableClients, setAvailableClients] = useState(DEFAULT_PRESET_CLIENTS);
@@ -181,14 +170,7 @@ export default function App() {
   };
 
   // ── Filtered suggestions ──
-  const filteredSuggestions =
-    recommendation?.suggestions?.filter((item) => {
-      if (selectedCategory === 'all') return true;
-      return (
-        item.categorie &&
-        item.categorie.toUpperCase().includes(selectedCategory.toUpperCase())
-      );
-    }) || [];
+  const filteredSuggestions = recommendation?.suggestions || [];
 
   // ── Filtered client chips ──
   const filteredClients = searchQuery
@@ -222,25 +204,7 @@ export default function App() {
 
       {/* ─── MAIN ─── */}
       <div className="main-container">
-        {/* ── Product Carousel ── */}
-        <section className="carousel-section">
-          <div className="section-header">
-            <div className="section-title">Catalogue Produits</div>
-            <div className="section-subtitle">Parcourez notre gamme</div>
-          </div>
-          <div className="carousel-scroll">
-            {CATEGORIES.map((cat) => (
-              <div
-                key={cat.id}
-                className={`category-card ${selectedCategory === cat.id ? 'active' : ''}`}
-                onClick={() => setSelectedCategory(cat.id)}
-              >
-                <span className="category-icon">{cat.icon}</span>
-                <span className="category-name">{cat.name}</span>
-              </div>
-            ))}
-          </div>
-        </section>
+
 
         {/* ── Panels Row ── */}
         <div className="panels-row">
@@ -346,7 +310,6 @@ export default function App() {
               </div>
               <div className="section-subtitle">
                 {filteredSuggestions.length} article(s) recommandé(s)
-                {selectedCategory !== 'all' && ` • Filtre : ${selectedCategory}`}
               </div>
             </div>
             <button
