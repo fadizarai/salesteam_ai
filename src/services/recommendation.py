@@ -119,6 +119,13 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
     client_id = request.client_id
     df_client = df_all[df_all["code_client"] == client_id].copy()
 
+    # Deduplicate: keep only the latest visit snapshot for each unique product
+    if "visit_date" in df_client.columns:
+        df_client["visit_date"] = pd.to_datetime(df_client["visit_date"])
+        df_client = df_client.sort_values("visit_date").drop_duplicates(subset=["code_article"], keep="last")
+    else:
+        df_client = df_client.drop_duplicates(subset=["code_article"], keep="last")
+
     if df_client.empty:
         logger.warning(f"No history found for client_id='{client_id}'")
         return RecommendResponse(
@@ -137,47 +144,113 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
     )
     df_client["categorie_encoded"] = encoder.transform(df_client["categorie_clean"])
 
-    # Prepare feature matrix X
-    cols_to_drop = [
-        "code_client",
-        "code_article",
-        "designation",
-        "categorie",
-        "categorie_clean",
-        "target_qty",
-        "target_bought",
+    # Define explicit features for classifier and regressor to match training
+    classifier_features = [
+        "frequency",
+        "total_qty",
+        "avg_qty",
+        "avg_delay_days",
+        "recency_days",
+        "recency_relative",
+        "std_qty",
+        "min_qty",
+        "best_month",
+        "avg_seasonal_coef"
     ]
-    existing = [c for c in cols_to_drop if c in df_client.columns]
-    X = df_client.drop(columns=existing)
-
-    for col in X.select_dtypes(include=["bool"]).columns:
-        X[col] = X[col].astype(int)
+    regressor_features = [
+        "avg_qty",
+        "std_qty",
+        "min_qty",
+        "max_qty",
+        "last_qty",
+        "frequency",
+        "recency_days",
+        "avg_delay_days",
+        "current_month_coef",
+        "avg_seasonal_coef"
+    ]
 
     # ── Regressor: predict quantities for all rows now, reuse for candidates ──
     regressor_qty: np.ndarray | None = None
     if regressor is not None:
         try:
-            raw_qty = regressor.predict(X)
+            X_reg = df_client[regressor_features].copy()
+            for col in X_reg.select_dtypes(include=["bool"]).columns:
+                X_reg[col] = X_reg[col].astype(int)
+            
+            raw_qty = regressor.predict(X_reg)
             regressor_qty = np.clip(np.round(raw_qty), 1, None).astype(int)
             df_client["regressor_qty"] = regressor_qty
         except Exception as exc:
             logger.warning(f"Regressor prediction failed ({exc}). Falling back to avg_qty.")
             regressor_qty = None
 
-    # XGBoost Inference
-    probabilities = model.predict_proba(X)[:, 1]
+    # XGBoost Inference (Classifier)
+    X_clf = df_client[classifier_features].copy()
+    for col in X_clf.select_dtypes(include=["bool"]).columns:
+        X_clf[col] = X_clf[col].astype(int)
+
+    probabilities = model.predict_proba(X_clf)[:, 1]
     df_client["probabilite_achat"] = probabilities
+
+    # ── Business Re-Ranking ──────────────────────────────────────────────────
+    # The ML model gives a raw probability of purchase (ml_score).
+    # We apply two multiplicative boosts on top:
+    #
+    # 1. timing_boost — based on recency_relative = recency_days / avg_delay_days
+    #    If the client is at 85%+ of their normal reorder cycle, they are likely
+    #    to need this product soon. If overdue (>1.0), the boost is stronger.
+    #
+    # 2. trend_boost — amplifies growing products, penalizes declining ones.
+    #
+    # final_score = ml_score × timing_boost × trend_boost
+    # Candidates are then sorted by final_score (not raw ml_score).
+
+    def _compute_final_score(row: pd.Series) -> float:
+        ml_score = float(row["probabilite_achat"])
+        recency_rel = float(row.get("recency_relative", 1.0))
+        trend = float(row.get("trend", 0.0))
+
+        # Timing boost
+        if recency_rel >= 1.5:
+            timing_boost = 3.0   # Very overdue
+        elif recency_rel >= 1.0:
+            timing_boost = 2.0   # Overdue
+        elif recency_rel >= 0.85:
+            timing_boost = 1.5   # Due soon
+        else:
+            timing_boost = 1.0   # Not due yet
+
+        # Trend boost
+        if trend > 0.1:
+            trend_boost = 1.2    # Growing demand
+        elif trend < -0.2:
+            trend_boost = 0.7    # Declining demand
+        else:
+            trend_boost = 1.0    # Stable
+
+        return ml_score * timing_boost * trend_boost
+
+    df_client["final_score"] = df_client.apply(_compute_final_score, axis=1)
+    df_client["timing_boost"] = df_client.apply(
+        lambda r: (
+            3.0 if float(r.get("recency_relative", 1.0)) >= 1.5 else
+            2.0 if float(r.get("recency_relative", 1.0)) >= 1.0 else
+            1.5 if float(r.get("recency_relative", 1.0)) >= 0.85 else
+            1.0
+        ), axis=1
+    )
 
     # Filter categories if config has filter_categories
     config = request.config or AIConfig()
     if config.filter_categories:
         df_client = df_client[df_client["categorie"].isin(config.filter_categories)]
 
-    # Sort candidates by probability
-    ranked = df_client.sort_values(by="probabilite_achat", ascending=False)
-    
-    # Filter candidates >= 0.30 probability threshold or fallback to top candidates
-    candidates = ranked[ranked["probabilite_achat"] >= 0.30]
+    # Sort by final_score (business re-ranked), not raw ML probability
+    ranked = df_client.sort_values(by="final_score", ascending=False)
+
+    # Keep candidates with ml_score >= 0.20 (lower threshold since final_score handles boosting)
+    candidates = ranked[ranked["probabilite_achat"] >= 0.20]
     if candidates.empty:
         candidates = ranked.head(config.nb_suggestions)
     else:
@@ -227,6 +300,8 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
                 quantite_min=1,
                 quantite_max=max(sugg_qty * 3, 5),
                 score_confiance=round(prob, 4),
+                score_final=round(float(row.get("final_score", prob)), 4),
+                timing_boost=round(float(row.get("timing_boost", 1.0)), 1),
                 is_nouveau_produit=is_new,
                 explication=explication,
             )

@@ -41,7 +41,9 @@ class ProductSuggestion(BaseModel):
     quantite_suggeree:  int
     quantite_min:       int
     quantite_max:       int
-    score_confiance:    float
+    score_confiance:    float   # raw ML probability
+    score_final:        float   # after business re-ranking (ML × timing × trend)
+    timing_boost:       float   # 1.0 / 1.5 / 2.0 / 3.0 depending on reorder cycle
     is_nouveau_produit: bool
     explication:        str
 

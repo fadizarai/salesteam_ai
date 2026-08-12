@@ -1,40 +1,24 @@
 {
-  "trained_at": "2026-07-27T14:02:10.233844",
+  "trained_at": "2026-08-12T02:49:41.648260",
   "feature_columns": [
+    "frequency",
+    "total_qty",
     "avg_qty",
+    "avg_delay_days",
+    "recency_days",
+    "recency_relative",
     "std_qty",
     "min_qty",
-    "max_qty",
-    "total_qty",
-    "frequency",
-    "last_qty",
-    "recency_days",
-    "avg_delay_days",
-    "recency_relative",
-    "trend",
-    "company_encoded",
-    "current_month_coef",
-    "avg_seasonal_coef",
     "best_month",
-    "has_gps",
-    "latitude",
-    "longitude",
-    "is_bulk_product",
-    "nb_clients",
-    "days_since_first_order",
-    "is_new_product",
-    "client_total_products",
-    "client_total_invoices",
-    "client_avg_basket_size",
-    "categorie_encoded"
+    "avg_seasonal_coef"
   ],
-  "n_features": 26,
-  "best_iteration": 355,
-  "scale_pos_weight": 9.08762196288502,
+  "n_features": 10,
+  "best_iteration": 24,
+  "scale_pos_weight": 29.356439906507564,
   "metrics": {
-    "roc_auc": 0.9999980242798563,
-    "pr_auc": 0.9999837784840376
+    "roc_auc": 0.8608035653469498,
+    "pr_auc": 0.08774108906388409
   },
-  "train_clients": 515,
-  "test_clients": 148
+  "train_clients": 544,
+  "test_clients": 288
 }

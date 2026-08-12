@@ -370,11 +370,27 @@ export default function App() {
                           {item.code_article} • {item.categorie}
                         </div>
                       </div>
-                      <span
-                        className={`result-badge ${isHigh ? 'badge-high' : 'badge-mid'}`}
-                      >
-                        {isHigh ? 'Priorité Haute' : 'Recommandé'}
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        {item.timing_boost > 1.0 && (
+                          <span
+                            style={{
+                              fontSize: '0.72rem',
+                              fontWeight: 600,
+                              color: '#b45309',
+                              backgroundColor: '#fef3c7',
+                              padding: '2px 8px',
+                              borderRadius: '12px',
+                            }}
+                          >
+                            ⚡ Boost x{item.timing_boost}
+                          </span>
+                        )}
+                        <span
+                          className={`result-badge ${isHigh ? 'badge-high' : 'badge-mid'}`}
+                        >
+                          {isHigh ? 'Priorité Haute' : 'Recommandé'}
+                        </span>
+                      </div>
                     </div>
 
                     {/* Probability bar */}

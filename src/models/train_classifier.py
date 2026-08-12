@@ -1,14 +1,14 @@
 """
 Script d'entraînement du classifieur XGBoost (Layer 2 — AI / ML)
 
-Étape 1 — Charger le training_set
-Étape 2 — Encoder la colonne catégorielle 'categorie'
-Étape 3 — Préparer X (features) et y (target_bought)
-Étape 4 — Split train/test PAR CLIENT (évite la fuite de données)
-Étape 5 — Calculer scale_pos_weight sur le train uniquement
-Étape 6 — Entraîner XGBoost avec early stopping sur une validation dédiée
-Étape 7 — Évaluer (classification report, ROC-AUC, PR-AUC, importance features)
-Étape 8 — Sauvegarder modèle + encodeur + métadonnées de colonnes
+Etape 1 -- Charger le training_set (visit-level)
+Etape 2 -- Encoder la colonne categorielle 'categorie'
+Etape 3 -- Preparer X (features) et y (target_bought)
+Etape 4 -- Split TEMPOREL (train <= 2025 / val early 2026 / test late 2026)
+Etape 5 -- Calculer scale_pos_weight sur le train uniquement
+Etape 6 -- Entrainer XGBoost avec early stopping sur une validation dediee
+Etape 7 -- Evaluer (classification report, ROC-AUC, PR-AUC, importance features)
+Etape 8 -- Sauvegarder modele + encodeur + metadonnees de colonnes
 """
 
 import os
@@ -21,7 +21,7 @@ import pandas as pd
 import numpy as np
 import joblib
 from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import GroupShuffleSplit
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     classification_report,
     roc_auc_score,
@@ -35,24 +35,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-def split_by_client(
-    df: pd.DataFrame,
-    group_col: str = "code_client",
-    test_size: float = 0.2,
-    random_state: int = 42,
-):
-    splitter = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
-    train_idx, test_idx = next(splitter.split(df, groups=df[group_col]))
-    return df.iloc[train_idx].copy(), df.iloc[test_idx].copy()
-
 
 def run_training_pipeline(
     data_path: str = "data/processed/training_set.csv",
     model_output_path: str = "src/models/classifier_lsat.joblib",
     encoder_output_path: str = "src/models/encoder_categorie.joblib",
     metadata_output_path: str = "src/models/classifier_lsat_metadata.json",
-    test_size: float = 0.2,
-    val_size: float = 0.1,
+    train_cutoff: str = "2025-12-31",   # train on visits up to this date
+    val_cutoff: str = "2026-03-31",     # validate on visits in early 2026
     random_state: int = 42,
 ):
     # Étape 1 — Charger le training_set
@@ -72,12 +62,18 @@ def run_training_pipeline(
 
     # Étape 3 — X / y
     logger.info("Étape 3: Séparation features (X) / cible (y)...")
-    cols_to_drop = [
-        "code_client", "code_article", "designation",
-        "categorie", "target_qty", "target_bought",
+    feature_cols = [
+        "frequency",
+        "total_qty",
+        "avg_qty",
+        "avg_delay_days",
+        "recency_days",
+        "recency_relative",
+        "std_qty",
+        "min_qty",
+        "best_month",
+        "avg_seasonal_coef"
     ]
-    existing_drop = [c for c in cols_to_drop if c in df.columns]
-    feature_cols = [c for c in df.columns if c not in existing_drop]
 
     bool_cols = df[feature_cols].select_dtypes(include=["bool"]).columns
     for col in bool_cols:
@@ -85,38 +81,59 @@ def run_training_pipeline(
 
     logger.info(f"Nombre de features retenues : {len(feature_cols)} → {feature_cols}")
 
-    # Étape 4 — Split PAR CLIENT (train/val/test)
-    # Un split aléatoire classique (stratify sur les lignes) laisse le même
-    # client apparaître à la fois dans train et dans test avec des produits
-    # différents. Comme plusieurs features (recency, avg_qty, client_total_*)
-    # sont calculées au niveau du client, le modèle peut alors mémoriser des
-    # signatures de client plutôt que d'apprendre un pattern généralisable.
-    # On force donc TOUTES les lignes d'un même client à rester du même côté
-    # (train, val, ou test) via GroupShuffleSplit sur code_client.
-    logger.info("Étape 4: Split train/val/test par client (anti-fuite)...")
+    # Etape 4 -- Split TEMPOREL (evite la fuite temporelle)
+    # Un split aleatoire par client peut encore laisser des visites futures
+    # informer des visites passees via les features agreges.
+    # Le split temporel est la seule vraie garantie : le modele ne voit
+    # jamais une visite qui se produit APRES la date de coupure.
+    #
+    # train  : visites <= train_cutoff (2025-12-31)
+    # val    : visites entre train_cutoff et val_cutoff (Q1 2026)
+    # test   : visites apres val_cutoff (Q2 2026+)
+    logger.info("Etape 4: Split TEMPOREL train/val/test...")
 
-    train_val_df, test_df = split_by_client(df, "code_client", test_size, random_state)
-    train_df, val_df = split_by_client(
-        train_val_df, "code_client", val_size / (1 - test_size), random_state
-    )
+    if "visit_date" not in df.columns:
+        raise ValueError(
+            "La colonne 'visit_date' est absente du training_set. "
+            "Regenerez training_set.csv avec le nouveau target_builder.py."
+        )
 
-    X_train, y_train = train_df[feature_cols], train_df["target_bought"]
-    X_val, y_val = val_df[feature_cols], val_df["target_bought"]
-    X_test, y_test = test_df[feature_cols], test_df["target_bought"]
+    df["visit_date"] = pd.to_datetime(df["visit_date"])
+    train_cutoff_dt = pd.Timestamp(train_cutoff)
+    val_cutoff_dt   = pd.Timestamp(val_cutoff)
+
+    train_df = df[df["visit_date"] <= train_cutoff_dt].copy()
+    val_df   = df[(df["visit_date"] > train_cutoff_dt) & (df["visit_date"] <= val_cutoff_dt)].copy()
+    test_df  = df[df["visit_date"] > val_cutoff_dt].copy()
 
     logger.info(
-        f"Train: {X_train.shape} ({train_df['code_client'].nunique()} clients) | "
-        f"Val: {X_val.shape} ({val_df['code_client'].nunique()} clients) | "
-        f"Test: {X_test.shape} ({test_df['code_client'].nunique()} clients)"
+        f"Train : {len(train_df)} rows ({train_df['code_client'].nunique()} clients, "
+        f"up to {train_cutoff})"
+    )
+    logger.info(
+        f"Val   : {len(val_df)} rows ({val_df['code_client'].nunique()} clients, "
+        f"{train_cutoff} -> {val_cutoff})"
+    )
+    logger.info(
+        f"Test  : {len(test_df)} rows ({test_df['code_client'].nunique()} clients, "
+        f"after {val_cutoff})"
     )
 
-    overlap = (
-        set(train_df["code_client"]) & set(test_df["code_client"])
-    )
-    if overlap:
-        logger.error(f"FUITE DÉTECTÉE : {len(overlap)} clients partagés train/test !")
-    else:
-        logger.info("Vérification anti-fuite OK : aucun client partagé entre train et test.")
+    if len(val_df) == 0 or len(test_df) == 0:
+        raise ValueError(
+            "Val ou test set vide avec les dates de coupure actuelles. "
+            f"Verifiez que les donnees couvrent au-dela de {val_cutoff}."
+        )
+
+    X_train, y_train = train_df[feature_cols], train_df["target_bought"]
+    X_val,   y_val   = val_df[feature_cols],   val_df["target_bought"]
+    X_test,  y_test  = test_df[feature_cols],  test_df["target_bought"]
+
+    # Verify no temporal leakage
+    train_max = train_df["visit_date"].max()
+    val_min   = val_df["visit_date"].min()
+    test_min  = test_df["visit_date"].min()
+    logger.info(f"Anti-leakage check: train_max={train_max.date()} | val_min={val_min.date()} | test_min={test_min.date()}")
 
     # Étape 5 — scale_pos_weight sur le train uniquement
     logger.info("Étape 5: Calcul de scale_pos_weight (train uniquement)...")
@@ -134,12 +151,13 @@ def run_training_pipeline(
         scale_pos_weight=scale_pos_weight,
         eval_metric="aucpr",
         random_state=random_state,
-        n_estimators=500,
-        max_depth=6,
+        n_estimators=200,
+        max_depth=5,
         learning_rate=0.05,
         subsample=0.8,
         colsample_bytree=0.8,
-        early_stopping_rounds=30,
+        min_child_weight=5,
+        early_stopping_rounds=20,
     )
     model.fit(
         X_train, y_train,

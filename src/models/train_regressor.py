@@ -88,16 +88,16 @@ def evaluate_regressor(
         "improvement_rmse_pct": float(improvement_rmse),
     }
 
-    print(f"\n{'─'*55}")
+    print(f"\n{'-'*55}")
     print(f"  {label}")
-    print(f"{'─'*55}")
+    print(f"{'-'*55}")
     print(f"  MAE   XGBoost  : {mae:.3f} unités")
     print(f"  MAE   Baseline : {mae_baseline:.3f} unités  (juste avg_qty)")
     print(f"  Gain MAE       : {improvement_mae:+.1f}%")
     print(f"  RMSE  XGBoost  : {rmse:.3f}")
     print(f"  RMSE  Baseline : {rmse_baseline:.3f}")
     print(f"  Gain RMSE      : {improvement_rmse:+.1f}%")
-    print(f"{'─'*55}")
+    print(f"{'-'*55}")
 
     if improvement_mae < 0:
         logger.warning(
@@ -186,12 +186,18 @@ def run_regressor_pipeline(
     # avg_qty est conservée séparément pour servir de baseline de comparaison.
     logger.info("Étape 3: Préparation de X (features) et y (target_qty)...")
 
-    cols_to_drop = [
-        "code_client", "code_article", "designation",
-        "categorie", "target_qty", "target_bought",
+    feature_cols = [
+        "avg_qty",
+        "std_qty",
+        "min_qty",
+        "max_qty",
+        "last_qty",
+        "frequency",
+        "recency_days",
+        "avg_delay_days",
+        "current_month_coef",
+        "avg_seasonal_coef"
     ]
-    existing_drop = [c for c in cols_to_drop if c in df.columns]
-    feature_cols = [c for c in df.columns if c not in existing_drop]
 
     bool_cols = df[feature_cols].select_dtypes(include=["bool"]).columns
     for col in bool_cols:
@@ -263,12 +269,13 @@ def run_regressor_pipeline(
         objective="reg:squarederror",
         eval_metric="mae",
         random_state=random_state,
-        n_estimators=500,
-        max_depth=6,
+        n_estimators=200,
+        max_depth=5,
         learning_rate=0.05,
         subsample=0.8,
         colsample_bytree=0.8,
-        early_stopping_rounds=30,
+        min_child_weight=5,
+        early_stopping_rounds=20,
     )
     model.fit(
         X_train, y_train,
