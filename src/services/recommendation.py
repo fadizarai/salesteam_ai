@@ -90,16 +90,26 @@ def _get_dataset():
 def get_available_clients(limit: int = 50) -> list[dict]:
     """Returns a list of clients available in the dataset with metadata."""
     df = _get_dataset()
+
+    agg_dict = {
+        "total_products": ("code_article", "count"),
+        "bought_products": ("target_bought", "sum"),
+    }
+    if "client_avg_basket_size" in df.columns:
+        agg_dict["avg_basket"] = ("client_avg_basket_size", "first")
+    if "has_gps" in df.columns:
+        agg_dict["has_gps"] = ("has_gps", "first")
+
     client_counts = (
         df.groupby("code_client")
-        .agg(
-            total_products=("code_article", "count"),
-            bought_products=("target_bought", "sum"),
-            avg_basket=("client_avg_basket_size", "first"),
-            has_gps=("has_gps", "first"),
-        )
+        .agg(**agg_dict)
         .reset_index()
     )
+
+    if "avg_basket" not in client_counts.columns:
+        client_counts["avg_basket"] = 1.0
+    if "has_gps" not in client_counts.columns:
+        client_counts["has_gps"] = False
     
     # Sort clients with active history first
     client_counts = client_counts.sort_values(
