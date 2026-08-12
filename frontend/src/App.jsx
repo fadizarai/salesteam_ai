@@ -48,9 +48,12 @@ export default function App() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [recommendation, setRecommendation] = useState(null);
-  const [itemStatuses, setItemStatuses] = useState({});
+  const [suggestions, setSuggestions] = useState([]);
   const [quantities, setQuantities] = useState({});
+  const [itemStatuses, setItemStatuses] = useState({});
+  const [selectedCategory, setSelectedCategory] = useState('ALL');
+  const [selectedItemForModal, setSelectedItemForModal] = useState(null);
+  const [recommendation, setRecommendation] = useState(null);
   const [chatOpen, setChatOpen] = useState(false);
 
   // ── Load Client List from API on Mount ──
@@ -360,7 +363,12 @@ export default function App() {
                 const status = itemStatuses[item.code_article] || 'pending';
 
                 return (
-                  <div className="result-card" key={item.code_article}>
+                  <div
+                    className="result-card"
+                    key={item.code_article}
+                    onClick={() => setSelectedItemForModal(item)}
+                    style={{ cursor: 'pointer' }}
+                  >
                     <div className="result-card-header">
                       <div>
                         <div className="result-article-name">
@@ -370,27 +378,16 @@ export default function App() {
                           {item.code_article} • {item.categorie}
                         </div>
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        {item.timing_boost > 1.0 && (
-                          <span
-                            style={{
-                              fontSize: '0.72rem',
-                              fontWeight: 600,
-                              color: '#b45309',
-                              backgroundColor: '#fef3c7',
-                              padding: '2px 8px',
-                              borderRadius: '12px',
-                            }}
-                          >
-                            ⚡ Boost x{item.timing_boost}
-                          </span>
-                        )}
-                        <span
-                          className={`result-badge ${isHigh ? 'badge-high' : 'badge-mid'}`}
-                        >
-                          {isHigh ? 'Priorité Haute' : 'Recommandé'}
-                        </span>
-                      </div>
+                      <button
+                        className="btn-ai-analysis-trigger"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedItemForModal(item);
+                        }}
+                      >
+                        <Sparkles size={14} />
+                        <span>Analyse IA</span>
+                      </button>
                     </div>
 
                     {/* Probability bar */}
@@ -404,15 +401,15 @@ export default function App() {
                       <span className="proba-text">{probPct}%</span>
                     </div>
 
-                    {/* Explanation */}
-                    <div className="result-explanation">{item.explication}</div>
-
                     {/* Actions */}
-                    <div className="result-actions">
+                    <div
+                      className="result-actions"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <input
                         type="number"
                         min="1"
-                        max="100"
+                        max="1000"
                         value={
                           quantities[item.code_article] || item.quantite_suggeree
                         }
@@ -447,6 +444,83 @@ export default function App() {
           )}
         </section>
       </div>
+
+      {/* ─── PREMIUM LLM EXPLANATION MODAL ─── */}
+      {selectedItemForModal && (
+        <div
+          className="modal-overlay"
+          onClick={() => setSelectedItemForModal(null)}
+        >
+          <div
+            className="modal-card"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div className="modal-title-row">
+                <div className="modal-icon-badge">
+                  <Sparkles size={20} />
+                </div>
+                <div>
+                  <h3 className="modal-title">Analyse & Justification IA</h3>
+                  <p className="modal-subtitle">SalesTeam Intelligence • Llama 3.3</p>
+                </div>
+              </div>
+              <button
+                className="modal-close-btn"
+                onClick={() => setSelectedItemForModal(null)}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <div className="modal-product-box">
+                <div className="modal-product-name">
+                  {selectedItemForModal.designation}
+                </div>
+                <div className="modal-product-code">
+                  Code: <code>{selectedItemForModal.code_article}</code> • Catégorie: <strong>{selectedItemForModal.categorie}</strong>
+                </div>
+              </div>
+
+              <div className="modal-stats-row">
+                <div className="modal-stat-card">
+                  <div className="stat-label">Probabilité de Réachat</div>
+                  <div className="stat-value">
+                    {(selectedItemForModal.score_confiance * 100).toFixed(1)}%
+                  </div>
+                </div>
+                <div className="modal-stat-card">
+                  <div className="stat-label">Quantité Recommandée</div>
+                  <div className="stat-value highlight">
+                    {selectedItemForModal.quantite_suggeree} <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>unités</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="modal-llm-quote-box">
+                <div className="llm-quote-header">
+                  <Sparkles size={16} color="#1a56e8" />
+                  <span>Explication IA du Recommandation</span>
+                </div>
+                <p className="llm-quote-text">
+                  "{selectedItemForModal.explication}"
+                </p>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                className="btn-primary"
+                onClick={() => setSelectedItemForModal(null)}
+                style={{ width: '100%', padding: '12px' }}
+              >
+                Fermer l'analyse
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ─── CHATBOT FAB ─── */}
       <button className="chatbot-fab" onClick={() => setChatOpen(!chatOpen)}>
