@@ -358,8 +358,10 @@ export default function App() {
           {!loading && !error && filteredSuggestions.length > 0 && (
             <div className="results-grid">
               {filteredSuggestions.map((item) => {
-                const probPct = (item.score_confiance * 100).toFixed(1);
-                const isHigh = item.score_confiance >= 0.80;
+                const MAX_SCORE = 3.0; // max possible: 1.0 × 3.0 × 1.2 = 3.6
+                const finalScore = item.score_final ?? item.score_confiance;
+                const barWidth = Math.min((finalScore / MAX_SCORE) * 100, 100).toFixed(1);
+                const isHigh = finalScore >= 1.5;
                 const status = itemStatuses[item.code_article] || 'pending';
 
                 return (
@@ -390,15 +392,15 @@ export default function App() {
                       </button>
                     </div>
 
-                    {/* Probability bar */}
+                    {/* Final Score bar (ML × timing_boost × trend_boost) */}
                     <div className="result-proba-row">
                       <div className="proba-bar-bg">
                         <div
                           className="proba-bar-fill proba-fill-blue"
-                          style={{ width: `${probPct}%` }}
+                          style={{ width: `${barWidth}%` }}
                         ></div>
                       </div>
-                      <span className="proba-text">{probPct}%</span>
+                      <span className="proba-text">Score {finalScore.toFixed(2)}</span>
                     </div>
 
                     {/* Actions */}
@@ -485,16 +487,25 @@ export default function App() {
 
               <div className="modal-stats-row">
                 <div className="modal-stat-card">
-                  <div className="stat-label">Probabilité de Réachat</div>
+                  <div className="stat-label">Score Final IA</div>
+                  <div className="stat-value highlight">
+                    {(selectedItemForModal.score_final ?? selectedItemForModal.score_confiance).toFixed(2)}
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: '#6b7280', marginTop: '2px' }}>ML × timing × tendance</div>
+                </div>
+                <div className="modal-stat-card">
+                  <div className="stat-label">Prob. ML Brute</div>
                   <div className="stat-value">
                     {(selectedItemForModal.score_confiance * 100).toFixed(1)}%
                   </div>
+                  <div style={{ fontSize: '0.72rem', color: '#6b7280', marginTop: '2px' }}>XGBoost classifieur</div>
                 </div>
                 <div className="modal-stat-card">
                   <div className="stat-label">Quantité Recommandée</div>
-                  <div className="stat-value highlight">
+                  <div className="stat-value">
                     {selectedItemForModal.quantite_suggeree} <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>unités</span>
                   </div>
+                  <div style={{ fontSize: '0.72rem', color: '#6b7280', marginTop: '2px' }}>XGBoost régresseur</div>
                 </div>
               </div>
 
