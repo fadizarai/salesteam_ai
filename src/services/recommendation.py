@@ -87,6 +87,49 @@ def _get_dataset():
     return _df_data
 
 
+def _clamp_prediction(pred: float, row: pd.Series) -> tuple[int, int, int]:
+    """
+    Clamp the regressor's raw quantity prediction to realistic historical bounds.
+
+    Problem this solves:
+        The raw XGBoost regressor output is unconstrained. Using naive ±25%
+        around the prediction gives meaningless bounds like quantite_min=1 and
+        quantite_max=228 for a product the client typically orders in batches of 20.
+
+    Strategy:
+        1. Derive hard bounds from the client's own purchase history:
+               lower = max(1, hist_min × 0.5)   — floor: at least half the smallest order
+               upper = hist_max × 2.0            — ceiling: at most double the largest order
+        2. Build a confidence interval around the prediction:
+               qty_min = max(lower, pred × 0.75)
+               qty_max = min(upper, pred × 1.25)
+        3. Clamp the suggestion itself within [lower, upper].
+
+    Returns:
+        (qty_suggested, qty_min, qty_max)
+    """
+    hist_avg = float(row.get("avg_qty", pred))
+    hist_min = float(row.get("min_qty", 1.0))
+    hist_max = float(row.get("max_qty", pred * 2))
+
+    # Hard historical bounds
+    lower = max(1, int(hist_min * 0.5))
+    upper = max(lower + 1, int(hist_max * 2.0))
+
+    # Confidence interval around prediction
+    qty_min = max(lower, int(pred * 0.75))
+    qty_max = min(upper, int(pred * 1.25))
+
+    # Ensure min < max
+    if qty_min >= qty_max:
+        qty_max = qty_min + max(1, int(hist_avg * 0.25))
+
+    # Clamp suggestion within historical bounds
+    qty_suggested = max(lower, min(int(round(pred)), upper))
+
+    return qty_suggested, qty_min, qty_max
+
+
 def get_available_clients(limit: int = 50) -> list[dict]:
     """Returns a list of clients available in the dataset with metadata."""
     df = _get_dataset()
@@ -277,11 +320,14 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
 
         # ── Quantity: use regressor prediction if available, else avg_qty ──
         if "regressor_qty" in row and pd.notna(row["regressor_qty"]):
-            sugg_qty = max(1, int(row["regressor_qty"]))
+            raw_pred = float(row["regressor_qty"])
             qty_source = "IA"
         else:
-            sugg_qty = max(1, int(np.ceil(avg_qty)))
+            raw_pred = float(np.ceil(avg_qty))
             qty_source = "historique"
+
+        # Clamp to realistic historical bounds (replaces naive ±25% / hardcoded min=1)
+        sugg_qty, qty_min, qty_max = _clamp_prediction(raw_pred, row)
 
         is_new = bool(row.get("is_new_product", False))
 
@@ -300,15 +346,14 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
             is_new_product=is_new,
         )
 
-
         suggestions.append(
             ProductSuggestion(
                 code_article=str(row["code_article"]),
                 designation=designation,
                 categorie=cat,
                 quantite_suggeree=sugg_qty,
-                quantite_min=1,
-                quantite_max=max(sugg_qty * 3, 5),
+                quantite_min=qty_min,
+                quantite_max=qty_max,
                 score_confiance=round(prob, 4),
                 score_final=round(float(row.get("final_score", prob)), 4),
                 timing_boost=round(float(row.get("timing_boost", 1.0)), 1),
