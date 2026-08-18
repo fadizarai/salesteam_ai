@@ -182,3 +182,52 @@
     border-right-color: var(--border);
   }
 }
+
+/* ─── TOP AI CONFIG BAR ─── */
+.ai-config-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  background: var(--card-bg, #ffffff);
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  padding: 10px 24px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  margin-bottom: 24px;
+}
+
+.ai-config-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg, #f8fafc);
+  padding: 6px 14px;
+  border-radius: var(--radius-pill, 9999px);
+  border: 1px solid var(--border, #e2e8f0);
+  transition: all 0.2s ease;
+}
+
+.ai-config-pill:hover {
+  border-color: var(--primary, #1a56e8);
+  background: white;
+}
+
+.ai-config-pill-label {
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--text-body, #374151);
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .ai-config-bar {
+    justify-content: flex-start;
+    padding: 10px 16px;
+    gap: 10px;
+  }
+  .ai-config-pill {
+    flex: 1 1 auto;
+    justify-content: space-between;
+  }
+}

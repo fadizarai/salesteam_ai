@@ -168,7 +168,9 @@ export default function App() {
   };
 
   // ── Filtered suggestions ──
-  const filteredSuggestions = recommendation?.suggestions || [];
+  const filteredSuggestions = (recommendation?.suggestions || []).filter(
+    (item) => item.urgency_group !== 'decouvrir'
+  );
 
   // ── Filtered client chips ──
   const filteredClients = searchQuery
@@ -179,7 +181,6 @@ export default function App() {
 
   const urgentItems = filteredSuggestions.filter((item) => item.urgency_group === 'urgent');
   const recommendedItems = filteredSuggestions.filter((item) => item.urgency_group === 'recommande');
-  const discoverItems = filteredSuggestions.filter((item) => item.urgency_group === 'decouvrir');
 
   const renderCardList = (items, urgencyTitle, urgencyEmoji, sectionClass) => {
     if (items.length === 0) return null;
@@ -333,9 +334,25 @@ export default function App() {
         </div>
       </nav>
 
+      {/* ─── AI CONFIG BAR (Top Horizontal Strip) ─── */}
+      <div className="ai-config-bar">
+        {AI_TOGGLES.map((toggle) => (
+          <div className="ai-config-pill" key={toggle.key}>
+            <span className="ai-config-pill-label">{toggle.label}</span>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={aiToggles[toggle.key]}
+                onChange={() => handleToggle(toggle.key)}
+              />
+              <span className="toggle-track"></span>
+            </label>
+          </div>
+        ))}
+      </div>
+
       {/* ─── MAIN ─── */}
       <div className="main-container">
-
 
         {/* ── Panels Row ── */}
         <div className="panels-row">
@@ -379,26 +396,6 @@ export default function App() {
                 </div>
               )}
             </div>
-          </div>
-
-          {/* AI Configuration */}
-          <div className="panel-card">
-            <div className="section-header">
-              <div className="section-title">Configuration IA</div>
-            </div>
-            {AI_TOGGLES.map((toggle) => (
-              <div className="toggle-row" key={toggle.key}>
-                <span className="toggle-label">{toggle.label}</span>
-                <label className="toggle-switch">
-                  <input
-                    type="checkbox"
-                    checked={aiToggles[toggle.key]}
-                    onChange={() => handleToggle(toggle.key)}
-                  />
-                  <span className="toggle-track"></span>
-                </label>
-              </div>
-            ))}
           </div>
         </div>
 
@@ -476,7 +473,6 @@ export default function App() {
             <div className="urgency-sections-wrapper">
               {renderCardList(urgentItems, "URGENT — Réapprovisionnement en retard", "⚡", "urgency-urgent")}
               {renderCardList(recommendedItems, "RECOMMANDÉ — Forte probabilité d'achat", "✅", "urgency-recommande")}
-              {renderCardList(discoverItems, "À DÉCOUVRIR — Nouveaux produits", "💡", "urgency-decouvrir")}
             </div>
           )}
         </section>
