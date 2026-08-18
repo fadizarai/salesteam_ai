@@ -1,7 +1,10 @@
 {
-  "trained_at": "2026-08-12T02:51:21.586393",
+  "trained_at": "2026-08-18T03:48:40.656408",
+  "objective": "reg:absoluteerror",
+  "use_log_transform": false,
   "feature_columns": [
     "avg_qty",
+    "median_qty",
     "std_qty",
     "min_qty",
     "max_qty",
@@ -12,26 +15,26 @@
     "current_month_coef",
     "avg_seasonal_coef"
   ],
-  "n_features": 10,
-  "best_iteration": 44,
+  "n_features": 11,
+  "best_iteration": 93,
   "n_training_positives": 37424,
   "metrics_continuous": {
-    "mae": 8.273179776094542,
-    "rmse": 32.196101872964576,
+    "mae": 6.537251792907931,
+    "rmse": 28.52111916775334,
     "mae_baseline": 7.139869782509443,
     "rmse_baseline": 30.869602145805594,
-    "improvement_mae_pct": -15.87297847310005,
-    "improvement_rmse_pct": -4.297106651694311
+    "improvement_mae_pct": 8.440181795440402,
+    "improvement_rmse_pct": 7.607752658941713
   },
   "metrics_rounded": {
-    "mae": 8.29797580006785,
-    "rmse": 32.19642270096698,
+    "mae": 6.528779825850956,
+    "rmse": 28.51770154030907,
     "mae_baseline": 7.139869782509443,
     "rmse_baseline": 30.869602145805594,
-    "improvement_mae_pct": -16.220268055804347,
-    "improvement_rmse_pct": -4.298145952430634
+    "improvement_mae_pct": 8.558838960277342,
+    "improvement_rmse_pct": 7.6188238331930975
   },
   "train_clients": 356,
   "test_clients": 102,
-  "note": "Ce modèle est entraîné UNIQUEMENT sur les achats réels (target_qty > 0). Il doit être appelé APRÈS le classifieur, uniquement pour les paires que le classifieur a prédit comme achat=1."
+  "note": "Modèle entraîné avec objective=reg:absoluteerror, log_transform=False sur les achats réels (target_qty > 0)."
 }

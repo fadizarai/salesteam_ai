@@ -19,10 +19,8 @@ class AIConfig(BaseModel):
     use_seasonality:    bool       = True
     use_localisation:   bool       = True
     use_client_type:    bool       = True
-    use_category:       bool       = True
     use_promotions:     bool       = False   # phase 2
     filter_categories:  list[str]  = Field(default_factory=list)
-    nb_suggestions:     int        = 5
 
 
 class RecommendRequest(BaseModel):
@@ -41,11 +39,14 @@ class ProductSuggestion(BaseModel):
     quantite_suggeree:  int
     quantite_min:       int
     quantite_max:       int
+    source_quantite:    str     = "IA"  # "IA", "historique", "historique (variance trop élevée)"
     score_confiance:    float   # raw ML probability
     score_final:        float   # after business re-ranking (ML × timing × trend)
     timing_boost:       float   # 1.0 / 1.5 / 2.0 / 3.0 depending on reorder cycle
     is_nouveau_produit: bool
     explication:        str
+    urgency_group:      str     # "urgent", "recommande", "decouvrir"
+    recency_relative:   float
 
 
 class RecommendResponse(BaseModel):

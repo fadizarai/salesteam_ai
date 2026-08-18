@@ -30,7 +30,6 @@ const AI_TOGGLES = [
   { key: 'use_order_history', label: 'Historique des commandes' },
   { key: 'use_seasonality', label: 'Saisonnalité' },
   { key: 'use_localisation', label: 'Localisation GPS' },
-  { key: 'use_category', label: 'Catégorie produit' },
 ];
 
 export default function App() {
@@ -38,12 +37,10 @@ export default function App() {
   const [selectedClient, setSelectedClient] = useState('CLT091206');
   const [searchQuery, setSearchQuery] = useState('');
   const [availableClients, setAvailableClients] = useState(DEFAULT_PRESET_CLIENTS);
-  const [nbSuggestions, setNbSuggestions] = useState(5);
   const [aiToggles, setAiToggles] = useState({
     use_order_history: true,
     use_seasonality: true,
     use_localisation: true,
-    use_category: true,
   });
 
   const [loading, setLoading] = useState(false);
@@ -60,7 +57,7 @@ export default function App() {
   useEffect(() => {
     const loadAvailableClients = async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/clients?limit=50`);
+        const res = await fetch(`${API_BASE_URL}/clients`);
         if (res.ok) {
           const data = await res.json();
           if (data.clients && data.clients.length > 0) {
@@ -99,8 +96,6 @@ export default function App() {
             use_order_history: aiToggles.use_order_history,
             use_seasonality: aiToggles.use_seasonality,
             use_localisation: aiToggles.use_localisation,
-            use_category: aiToggles.use_category,
-            nb_suggestions: parseInt(nbSuggestions),
           },
         }),
       });
@@ -130,7 +125,7 @@ export default function App() {
 
   useEffect(() => {
     fetchRecommendation(selectedClient);
-  }, [selectedClient, nbSuggestions]);
+  }, [selectedClient]);
 
   // ── Handlers ──
   const handleSelectClientChip = (clientId) => {
@@ -180,7 +175,140 @@ export default function App() {
     ? availableClients.filter((c) =>
         c.id.toLowerCase().includes(searchQuery.toLowerCase())
       )
-    : availableClients.slice(0, 10);
+    : availableClients;
+
+  const urgentItems = filteredSuggestions.filter((item) => item.urgency_group === 'urgent');
+  const recommendedItems = filteredSuggestions.filter((item) => item.urgency_group === 'recommande');
+  const discoverItems = filteredSuggestions.filter((item) => item.urgency_group === 'decouvrir');
+
+  const renderCardList = (items, urgencyTitle, urgencyEmoji, sectionClass) => {
+    if (items.length === 0) return null;
+    return (
+      <div className={`urgency-section ${sectionClass}`} style={{ marginBottom: '32px' }}>
+        <h3 className="urgency-section-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px', fontSize: '1.1rem', fontWeight: 700 }}>
+          <span>{urgencyEmoji}</span> {urgencyTitle}
+          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#4b5563', background: '#e5e7eb', padding: '2px 8px', borderRadius: '999px', marginLeft: '6px' }}>
+            {items.length}
+          </span>
+        </h3>
+        <div className="results-grid">
+          {items.map((item) => {
+            const MAX_SCORE = 3.0;
+            const finalScore = item.score_final ?? item.score_confiance;
+            const barWidth = Math.min((finalScore / MAX_SCORE) * 100, 100).toFixed(1);
+            const status = itemStatuses[item.code_article] || 'pending';
+            
+            const isIA = item.source_quantite === 'IA';
+            const cardClass = isIA ? 'card-source-ia' : 'card-source-historique';
+
+            return (
+              <div
+                className={`result-card ${cardClass}`}
+                key={item.code_article}
+                onClick={() => setSelectedItemForModal(item)}
+                style={{ cursor: 'pointer', position: 'relative', overflow: 'hidden' }}
+              >
+                <div className="card-source-badge-container" style={{ marginBottom: '8px' }}>
+                  {isIA ? (
+                    <span className="source-badge badge-ia">🤖 Prédiction IA</span>
+                  ) : (
+                    <span className="source-badge badge-historique">📊 Moyenne historique</span>
+                  )}
+                </div>
+
+                <div className="result-card-header" style={{ marginTop: '4px' }}>
+                  <div>
+                    <div className="result-article-name" style={{ fontWeight: 600, fontSize: '0.95rem' }}>
+                      {item.designation}
+                    </div>
+                    <div className="result-article-code">
+                      {item.code_article} • {item.categorie}
+                    </div>
+                  </div>
+                  <button
+                    className="btn-ai-analysis-trigger"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedItemForModal(item);
+                    }}
+                  >
+                    <Sparkles size={14} />
+                    <span>Justifier</span>
+                  </button>
+                </div>
+
+                {isIA ? (
+                  /* CARD TYPE 2 — Source : "IA" */
+                  <div>
+                    <div className="result-proba-row" style={{ marginTop: '12px', marginBottom: '8px' }}>
+                      <div className="proba-bar-bg">
+                        <div
+                          className="proba-bar-fill proba-fill-blue"
+                          style={{ width: `${barWidth}%` }}
+                        ></div>
+                      </div>
+                      <span className="proba-text">Confiance : {(item.score_confiance * 100).toFixed(0)}%</span>
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#4b5563', marginBottom: '12px' }}>
+                      Intervalle estimé : <strong>{item.quantite_min}</strong> - <strong>{item.quantite_max}</strong> u.
+                    </div>
+                  </div>
+                ) : (
+                  /* CARD TYPE 1 — Source : "historique" */
+                  <div style={{ marginTop: '12px', marginBottom: '12px' }}>
+                    <div style={{ fontSize: '0.8rem', color: '#b45309', background: '#fffbeb', border: '1px solid #fef3c7', padding: '8px 10px', borderRadius: '6px', marginBottom: '8px', lineHeight: '1.3' }}>
+                      ⚠️ Basé sur l'historique car la variance d'achat est trop élevée pour l'IA.
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#4b5563' }}>
+                      Bornes de commande : <strong>{item.quantite_min}</strong> à <strong>{item.quantite_max}</strong> u.
+                    </div>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div
+                  className="result-actions"
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ marginTop: 'auto' }}
+                >
+                  <input
+                    type="number"
+                    min="1"
+                    max="1000"
+                    value={
+                      quantities[item.code_article] || item.quantite_suggeree
+                    }
+                    onChange={(e) =>
+                      handleQtyChange(item.code_article, e.target.value)
+                    }
+                    className="qty-input"
+                  />
+                  <button
+                    className={`btn-accept ${status === 'accepted' ? 'active' : ''}`}
+                    onClick={() =>
+                      toggleStatus(item.code_article, 'accepted')
+                    }
+                  >
+                    <CheckCircle2 size={14} />
+                    Accepter
+                  </button>
+                  <button
+                    className={`btn-reject ${status === 'rejected' ? 'active' : ''}`}
+                    onClick={() =>
+                      toggleStatus(item.code_article, 'rejected')
+                    }
+                  >
+                    <XCircle size={14} />
+                    Rejeter
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <>
@@ -215,6 +343,7 @@ export default function App() {
           <div className="panel-card">
             <div className="section-header">
               <div className="section-title">Sélection du Client</div>
+              <span style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 500 }}>{availableClients.length} clients disponibles</span>
             </div>
             <form onSubmit={handleSearchSubmit}>
               <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
@@ -257,18 +386,6 @@ export default function App() {
             <div className="section-header">
               <div className="section-title">Configuration IA</div>
             </div>
-            <div className="config-slider-row">
-              <span className="config-slider-label">Nombre de suggestions</span>
-              <span className="config-slider-value">{nbSuggestions}</span>
-            </div>
-            <input
-              type="range"
-              min="3"
-              max="15"
-              value={nbSuggestions}
-              onChange={(e) => setNbSuggestions(e.target.value)}
-              className="config-slider"
-            />
             {AI_TOGGLES.map((toggle) => (
               <div className="toggle-row" key={toggle.key}>
                 <span className="toggle-label">{toggle.label}</span>
@@ -356,92 +473,10 @@ export default function App() {
 
           {/* Results Grid */}
           {!loading && !error && filteredSuggestions.length > 0 && (
-            <div className="results-grid">
-              {filteredSuggestions.map((item) => {
-                const MAX_SCORE = 3.0; // max possible: 1.0 × 3.0 × 1.2 = 3.6
-                const finalScore = item.score_final ?? item.score_confiance;
-                const barWidth = Math.min((finalScore / MAX_SCORE) * 100, 100).toFixed(1);
-                const isHigh = finalScore >= 1.5;
-                const status = itemStatuses[item.code_article] || 'pending';
-
-                return (
-                  <div
-                    className="result-card"
-                    key={item.code_article}
-                    onClick={() => setSelectedItemForModal(item)}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <div className="result-card-header">
-                      <div>
-                        <div className="result-article-name">
-                          {item.designation}
-                        </div>
-                        <div className="result-article-code">
-                          {item.code_article} • {item.categorie}
-                        </div>
-                      </div>
-                      <button
-                        className="btn-ai-analysis-trigger"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedItemForModal(item);
-                        }}
-                      >
-                        <Sparkles size={14} />
-                        <span>Analyse IA</span>
-                      </button>
-                    </div>
-
-                    {/* Final Score bar (ML × timing_boost × trend_boost) */}
-                    <div className="result-proba-row">
-                      <div className="proba-bar-bg">
-                        <div
-                          className="proba-bar-fill proba-fill-blue"
-                          style={{ width: `${barWidth}%` }}
-                        ></div>
-                      </div>
-                      <span className="proba-text">Score {finalScore.toFixed(2)}</span>
-                    </div>
-
-                    {/* Actions */}
-                    <div
-                      className="result-actions"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <input
-                        type="number"
-                        min="1"
-                        max="1000"
-                        value={
-                          quantities[item.code_article] || item.quantite_suggeree
-                        }
-                        onChange={(e) =>
-                          handleQtyChange(item.code_article, e.target.value)
-                        }
-                        className="qty-input"
-                      />
-                      <button
-                        className={`btn-accept ${status === 'accepted' ? 'active' : ''}`}
-                        onClick={() =>
-                          toggleStatus(item.code_article, 'accepted')
-                        }
-                      >
-                        <CheckCircle2 size={14} />
-                        Accepter
-                      </button>
-                      <button
-                        className={`btn-reject ${status === 'rejected' ? 'active' : ''}`}
-                        onClick={() =>
-                          toggleStatus(item.code_article, 'rejected')
-                        }
-                      >
-                        <XCircle size={14} />
-                        Rejeter
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="urgency-sections-wrapper">
+              {renderCardList(urgentItems, "URGENT — Réapprovisionnement en retard", "⚡", "urgency-urgent")}
+              {renderCardList(recommendedItems, "RECOMMANDÉ — Forte probabilité d'achat", "✅", "urgency-recommande")}
+              {renderCardList(discoverItems, "À DÉCOUVRIR — Nouveaux produits", "💡", "urgency-decouvrir")}
             </div>
           )}
         </section>

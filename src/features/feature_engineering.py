@@ -42,6 +42,7 @@ def build_feature_matrix(
 
     g1 = pd.DataFrame()
     g1["avg_qty"] = grp["quantite"].mean()
+    g1["median_qty"] = grp["quantite"].median()
     g1["std_qty"] = grp["quantite"].std().fillna(0.0)
     g1["min_qty"] = grp["quantite"].min()
     g1["max_qty"] = grp["quantite"].max()
@@ -130,7 +131,7 @@ def build_feature_matrix(
 
     cols_to_keep = [
         "code_client", "code_article",
-        "avg_qty", "std_qty", "min_qty", "max_qty", "total_qty",
+        "avg_qty", "median_qty", "std_qty", "min_qty", "max_qty", "total_qty",
         "frequency", "last_qty", "recency_days",
         "avg_delay_days", "recency_relative", "trend",
         "company_encoded",

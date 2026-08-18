@@ -59,6 +59,7 @@ def _compute_product_features(
     dates = prod_hist["date_commande"].values
 
     avg_qty = float(np.mean(qtys))
+    median_qty = float(np.median(qtys))
     std_qty = float(np.std(qtys)) if len(qtys) > 1 else 0.0
     min_qty = float(np.min(qtys))
     max_qty = float(np.max(qtys))
@@ -109,6 +110,7 @@ def _compute_product_features(
         "categorie": prod_hist["categorie"].iloc[0] if "categorie" in prod_hist.columns and not prod_hist["categorie"].empty else "UNKNOWN",
         "designation": prod_hist["designation"].iloc[0] if "designation" in prod_hist.columns and not prod_hist["designation"].empty else "UNKNOWN",
         "avg_qty": avg_qty,
+        "median_qty": median_qty,
         "std_qty": std_qty,
         "min_qty": min_qty,
         "max_qty": max_qty,

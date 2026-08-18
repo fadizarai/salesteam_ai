@@ -130,7 +130,19 @@ def _clamp_prediction(pred: float, row: pd.Series) -> tuple[int, int, int]:
     return qty_suggested, qty_min, qty_max
 
 
-def get_available_clients(limit: int = 50) -> list[dict]:
+def _compute_timing_boost(recency_rel: float) -> float:
+    """Computes timing boost factor based on relative recency."""
+    if recency_rel >= 1.5:
+        return 3.0   # Very overdue
+    elif recency_rel >= 1.0:
+        return 2.0   # Overdue
+    elif recency_rel >= 0.85:
+        return 1.5   # Due soon
+    else:
+        return 1.0   # Not due yet
+
+
+def get_available_clients(limit: int = None) -> list[dict]:
     """Returns a list of clients available in the dataset with metadata."""
     df = _get_dataset()
 
@@ -157,7 +169,9 @@ def get_available_clients(limit: int = 50) -> list[dict]:
     # Sort clients with active history first
     client_counts = client_counts.sort_values(
         by=["bought_products", "total_products"], ascending=False
-    ).head(limit)
+    )
+    if limit and limit > 0:
+        client_counts = client_counts.head(limit)
 
     return client_counts.to_dict(orient="records")
 
@@ -197,6 +211,9 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
     )
     df_client["categorie_encoded"] = encoder.transform(df_client["categorie_clean"])
 
+    if "median_qty" not in df_client.columns:
+        df_client["median_qty"] = df_client["avg_qty"]
+
     # Define explicit features for classifier and regressor to match training
     classifier_features = [
         "frequency",
@@ -212,6 +229,7 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
     ]
     regressor_features = [
         "avg_qty",
+        "median_qty",
         "std_qty",
         "min_qty",
         "max_qty",
@@ -264,15 +282,7 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
         recency_rel = float(row.get("recency_relative", 1.0))
         trend = float(row.get("trend", 0.0))
 
-        # Timing boost
-        if recency_rel >= 1.5:
-            timing_boost = 3.0   # Very overdue
-        elif recency_rel >= 1.0:
-            timing_boost = 2.0   # Overdue
-        elif recency_rel >= 0.85:
-            timing_boost = 1.5   # Due soon
-        else:
-            timing_boost = 1.0   # Not due yet
+        timing_boost = _compute_timing_boost(recency_rel)
 
         # Trend boost
         if trend > 0.1:
@@ -286,12 +296,8 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
 
     df_client["final_score"] = df_client.apply(_compute_final_score, axis=1)
     df_client["timing_boost"] = df_client.apply(
-        lambda r: (
-            3.0 if float(r.get("recency_relative", 1.0)) >= 1.5 else
-            2.0 if float(r.get("recency_relative", 1.0)) >= 1.0 else
-            1.5 if float(r.get("recency_relative", 1.0)) >= 0.85 else
-            1.0
-        ), axis=1
+        lambda r: _compute_timing_boost(float(r.get("recency_relative", 1.0))),
+        axis=1,
     )
 
     # Filter categories if config has filter_categories
@@ -302,34 +308,66 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
     # Sort by final_score (business re-ranked), not raw ML probability
     ranked = df_client.sort_values(by="final_score", ascending=False)
 
-    # Keep candidates with ml_score >= 0.20 (lower threshold since final_score handles boosting)
-    candidates = ranked[ranked["probabilite_achat"] >= 0.20]
-    if candidates.empty:
-        candidates = ranked.head(config.nb_suggestions)
+    # ── Urgency-based Selection ──
+    # 1. URGENT (⚡) : recency_relative >= 1.0 AND final_score > 0.80. Capped at 7.
+    urgent_df = ranked[
+        (ranked["recency_relative"] >= 1.0) & (ranked["final_score"] > 0.80)
+    ].head(7).copy()
+    urgent_df["urgency_group"] = "urgent"
+
+    # 2. RECOMMANDÉ (✅) : final_score > 0.65. (Limit to 5)
+    rec_candidates = ranked[~ranked["code_article"].isin(urgent_df["code_article"])]
+    recommended_df = rec_candidates[rec_candidates["final_score"] > 0.65].head(5).copy()
+    recommended_df["urgency_group"] = "recommande"
+
+    # 3. À DÉCOUVRIR (💡) : is_new_product == True. (Limit to 2)
+    already_selected = pd.concat([urgent_df["code_article"], recommended_df["code_article"]]) if not urgent_df.empty or not recommended_df.empty else pd.Series(dtype=str)
+    discover_candidates = ranked[~ranked["code_article"].isin(already_selected)]
+    if "is_new_product" in discover_candidates.columns:
+        discover_mask = discover_candidates["is_new_product"] == True
     else:
-        candidates = candidates.head(config.nb_suggestions)
+        discover_mask = discover_candidates["frequency"] <= 2
+    discover_df = discover_candidates[discover_mask].head(2).copy()
+    discover_df["urgency_group"] = "decouvrir"
+
+    # Combine candidates
+    candidates = pd.concat([urgent_df, recommended_df, discover_df])
+
+    # Fallback to recommended head 5 if completely empty (e.g. newly initialized client)
+    if candidates.empty:
+        recommended_df = ranked.head(5).copy()
+        recommended_df["urgency_group"] = "recommande"
+        candidates = recommended_df
 
     suggestions = []
     for _, row in candidates.iterrows():
         prob = float(row["probabilite_achat"])
         recency = float(row.get("recency_days", 30))
+        recency_rel = float(row.get("recency_relative", 1.0))
         freq = int(row.get("frequency", 1))
         avg_qty = float(row.get("avg_qty", 1.0))
         designation = str(row["designation"])
         cat = str(row["categorie"])
+        urg_grp = str(row["urgency_group"])
 
-        # ── Quantity: use regressor prediction if available, else avg_qty ──
-        if "regressor_qty" in row and pd.notna(row["regressor_qty"]):
+        # ── Quantity: CV-based fallback with CV threshold > 0.8
+        std_qty = float(row.get("std_qty", 0.0))
+        cv = std_qty / avg_qty if avg_qty > 0 else 999.0
+
+        if cv > 0.8:
+            raw_pred = float(np.ceil(avg_qty))
+            qty_source = "historique"
+        elif "regressor_qty" in row and pd.notna(row["regressor_qty"]):
             raw_pred = float(row["regressor_qty"])
             qty_source = "IA"
         else:
             raw_pred = float(np.ceil(avg_qty))
             qty_source = "historique"
 
-        # Clamp to realistic historical bounds (replaces naive ±25% / hardcoded min=1)
+        # Clamp to realistic bounds
         sugg_qty, qty_min, qty_max = _clamp_prediction(raw_pred, row)
 
-        is_new = bool(row.get("is_new_product", False))
+        is_new = freq <= 2
 
         # Explanation generation
         from src.services.explanation import explain_suggestion
@@ -344,6 +382,7 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
             frequency=freq,
             trend=float(row.get("trend", 0)),
             is_new_product=is_new,
+            qty_source=qty_source,
         )
 
         suggestions.append(
@@ -354,11 +393,14 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
                 quantite_suggeree=sugg_qty,
                 quantite_min=qty_min,
                 quantite_max=qty_max,
+                source_quantite=qty_source,
                 score_confiance=round(prob, 4),
                 score_final=round(float(row.get("final_score", prob)), 4),
                 timing_boost=round(float(row.get("timing_boost", 1.0)), 1),
                 is_nouveau_produit=is_new,
                 explication=explication,
+                urgency_group=urg_grp,
+                recency_relative=round(recency_rel, 2),
             )
         )
 
@@ -369,3 +411,5 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
         suggestions=suggestions,
         generated_at=datetime.now().isoformat(),
     )
+
+

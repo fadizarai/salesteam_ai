@@ -280,8 +280,9 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  max-height: 140px;
+  max-height: 220px;
   overflow-y: auto;
+  padding-right: 4px;
 }
 
 .client-chip {
@@ -538,6 +539,64 @@ body {
   color: var(--primary);
   min-width: 48px;
   text-align: right;
+}
+
+/* Card type 1: Historique */
+.result-card.card-source-historique {
+  background: #fffdf5;
+  border: 1.5px solid #fde68a;
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.05);
+}
+.result-card.card-source-historique:hover {
+  border-color: #f59e0b;
+  box-shadow: 0 6px 16px rgba(245, 158, 11, 0.1);
+}
+
+/* Card type 2: IA */
+.result-card.card-source-ia {
+  background: #ffffff;
+  border: 1.5px solid #bfdbfe;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.05);
+}
+.result-card.card-source-ia:hover {
+  border-color: #2563eb;
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.1);
+}
+
+/* Badges for sources */
+.card-source-badge-container {
+  display: flex;
+  margin-bottom: 6px;
+}
+.source-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+}
+.badge-ia {
+  background: #eff6ff;
+  color: #1e40af;
+  border: 1px solid #bfdbfe;
+}
+.badge-historique {
+  background: #fffbeb;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
+
+/* Urgency sections */
+.urgency-section-title {
+  color: var(--text-dark);
+}
+.urgency-urgent .urgency-section-title {
+  color: #dc2626;
+}
+.urgency-recommande .urgency-section-title {
+  color: #2563eb;
+}
+.urgency-decouvrir .urgency-section-title {
+  color: #4f46e5;
 }
 
 .result-explanation {

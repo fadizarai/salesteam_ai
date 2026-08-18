@@ -8,14 +8,16 @@ import logging
 from fastapi import APIRouter, HTTPException
 from src.services.recommendation import get_available_clients
 
+from typing import Optional
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
 @router.get("/clients")
-async def list_clients(limit: int = 50):
+async def list_clients(limit: Optional[int] = None):
     """
-    Get top clients from the dataset with historical statistics.
+    Get all clients from the dataset with historical statistics.
     """
     try:
         clients = get_available_clients(limit=limit)
