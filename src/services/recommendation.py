@@ -320,18 +320,8 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
     recommended_df = rec_candidates[rec_candidates["final_score"] > 0.65].head(5).copy()
     recommended_df["urgency_group"] = "recommande"
 
-    # 3. À DÉCOUVRIR (💡) : is_new_product == True. (Limit to 2)
-    already_selected = pd.concat([urgent_df["code_article"], recommended_df["code_article"]]) if not urgent_df.empty or not recommended_df.empty else pd.Series(dtype=str)
-    discover_candidates = ranked[~ranked["code_article"].isin(already_selected)]
-    if "is_new_product" in discover_candidates.columns:
-        discover_mask = discover_candidates["is_new_product"] == True
-    else:
-        discover_mask = discover_candidates["frequency"] <= 2
-    discover_df = discover_candidates[discover_mask].head(2).copy()
-    discover_df["urgency_group"] = "decouvrir"
-
     # Combine candidates
-    candidates = pd.concat([urgent_df, recommended_df, discover_df])
+    candidates = pd.concat([urgent_df, recommended_df])
 
     # Fallback to recommended head 5 if completely empty (e.g. newly initialized client)
     if candidates.empty:
@@ -350,13 +340,13 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
         cat = str(row["categorie"])
         urg_grp = str(row["urgency_group"])
 
-        # ── Quantity: CV-based fallback with CV threshold > 0.8
+        # ── Quantity: CV-based fallback with CV threshhead(7)old > 1.0
         std_qty = float(row.get("std_qty", 0.0))
         cv = std_qty / avg_qty if avg_qty > 0 else 999.0
 
-        if cv > 0.8:
+        if cv > 1.0:
             raw_pred = float(np.ceil(avg_qty))
-            qty_source = "historique"
+            qty_source = "historique (variance trop élevée)"
         elif "regressor_qty" in row and pd.notna(row["regressor_qty"]):
             raw_pred = float(row["regressor_qty"])
             qty_source = "IA"
@@ -367,7 +357,7 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
         # Clamp to realistic bounds
         sugg_qty, qty_min, qty_max = _clamp_prediction(raw_pred, row)
 
-        is_new = freq <= 2
+        is_new = bool(row.get("is_new_product", False))
 
         # Explanation generation
         from src.services.explanation import explain_suggestion
