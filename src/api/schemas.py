@@ -53,6 +53,10 @@ class RecommendResponse(BaseModel):
     """Full response sent back to Flutter."""
     client_id:      str
     commercial_id:  str
+    # TODO: nb_suggestions actuellement non lu par recommendation.py —
+    # les plafonds urgent(7)/recommande(5) restent fixes. Décision en attente
+    # sur un usage futur (ex: limite d'affichage frontend indépendante du
+    # split urgent/recommandé).
     nb_suggestions: int
     suggestions:    list[ProductSuggestion]
     generated_at:   str

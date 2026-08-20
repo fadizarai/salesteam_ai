@@ -7,7 +7,11 @@ Workflow:
 2. Load XGBoost Classifier + XGBoost Regressor + Category LabelEncoder
 3. Filter products for the requested client_id
 4. Run predict_proba() -> purchase probabilities (classifier)
-5. Filter by threshold / nb_suggestions
+5. Filter by urgency-based selection (urgent cap 7, recommande cap 5)
+   # TODO: nb_suggestions actuellement non lu par recommendation.py —
+   # les plafonds urgent(7)/recommande(5) restent fixes. Décision en attente
+   # sur un usage futur (ex: limite d'affichage frontend indépendante du
+   # split urgent/recommandé).
 6. Run predict() -> suggested quantities (regressor, clip + round to int)
 7. Generate human-readable French explanations
 8. Return RecommendResponse
@@ -198,6 +202,10 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
         return RecommendResponse(
             client_id=client_id,
             commercial_id=request.commercial_id,
+            # TODO: nb_suggestions actuellement non lu par recommendation.py —
+            # les plafonds urgent(7)/recommande(5) restent fixes. Décision en attente
+            # sur un usage futur (ex: limite d'affichage frontend indépendante du
+            # split urgent/recommandé).
             nb_suggestions=0,
             suggestions=[],
             generated_at=datetime.now().isoformat(),
@@ -397,6 +405,10 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
     return RecommendResponse(
         client_id=client_id,
         commercial_id=request.commercial_id,
+        # TODO: nb_suggestions actuellement non lu par recommendation.py —
+        # les plafonds urgent(7)/recommande(5) restent fixes. Décision en attente
+        # sur un usage futur (ex: limite d'affichage frontend indépendante du
+        # split urgent/recommandé).
         nb_suggestions=len(suggestions),
         suggestions=suggestions,
         generated_at=datetime.now().isoformat(),
