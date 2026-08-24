@@ -9,6 +9,9 @@ import {
   X,
   Loader2,
   Sparkles,
+  ChevronDown,
+  ChevronUp,
+  Users,
 } from 'lucide-react';
 
 const API_BASE_URL = 'http://127.0.0.1:8000/api';
@@ -34,10 +37,15 @@ const AI_TOGGLES = [
 
 export default function App() {
   const [company, setCompany] = useState('LSAT');
-  const [selectedClient, setSelectedClient] = useState('CLT091206');
+  const [selectedClient, setSelectedClient] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [availableClients, setAvailableClients] = useState(DEFAULT_PRESET_CLIENTS);
-  const [aiToggles, setAiToggles] = useState({
+  const [visitDate, setVisitDate] = useState(new Date().toISOString().split('T')[0]);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [loadingStep, setLoadingStep] = useState('');
+  const [inputError, setInputError] = useState(null);
+
+  // Keep AI config toggles in state to send to backend in background
+  const [aiToggles] = useState({
     use_order_history: true,
     use_seasonality: true,
     use_localisation: true,
@@ -45,33 +53,31 @@ export default function App() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [suggestions, setSuggestions] = useState([]);
   const [quantities, setQuantities] = useState({});
   const [itemStatuses, setItemStatuses] = useState({});
-  const [selectedCategory, setSelectedCategory] = useState('ALL');
   const [selectedItemForModal, setSelectedItemForModal] = useState(null);
   const [recommendation, setRecommendation] = useState(null);
   const [chatOpen, setChatOpen] = useState(false);
+  const [availableClients, setAvailableClients] = useState([]);
+  const [clientListOpen, setClientListOpen] = useState(false);
+  const [clientListLoading, setClientListLoading] = useState(true);
 
   // ── Load Client List from API on Mount ──
   useEffect(() => {
     const loadAvailableClients = async () => {
+      setClientListLoading(true);
       try {
         const res = await fetch(`${API_BASE_URL}/clients`);
         if (res.ok) {
           const data = await res.json();
           if (data.clients && data.clients.length > 0) {
-            setAvailableClients(
-              data.clients.map((c) => ({
-                id: c.code_client,
-                label: c.code_client,
-              }))
-            );
-            setSelectedClient(data.clients[0].code_client);
+            setAvailableClients(data.clients.map((c) => c.code_client));
           }
         }
       } catch (err) {
-        console.warn('Could not load client list, using presets:', err);
+        console.warn('Could not load client list:', err);
+      } finally {
+        setClientListLoading(false);
       }
     };
     loadAvailableClients();
@@ -79,11 +85,21 @@ export default function App() {
 
   // ── API Call ──
   const fetchRecommendation = async (clientId) => {
-    const activeId = clientId || selectedClient;
-    if (!activeId) return;
+    const activeId = clientId ? clientId.trim().toUpperCase() : '';
+    if (!activeId) {
+      setInputError('Veuillez saisir un code client.');
+      return;
+    }
 
     setLoading(true);
+    setLoadingStep('Recherche du client...');
     setError(null);
+    setInputError(null);
+
+    const stepTimer = setTimeout(() => {
+      setLoadingStep('Génération des recommandations...');
+    }, 450);
+
     try {
       const response = await fetch(`${API_BASE_URL}/recommend`, {
         method: 'POST',
@@ -92,6 +108,7 @@ export default function App() {
           client_id: activeId,
           commercial_id: `COMMERCIAL_${company}`,
           company: company,
+          visit_date: visitDate || null,
           config: {
             use_order_history: aiToggles.use_order_history,
             use_seasonality: aiToggles.use_seasonality,
@@ -101,7 +118,7 @@ export default function App() {
       });
 
       if (!response.ok) {
-        throw new Error(`Erreur serveur (${response.status})`);
+        throw new Error('Client introuvable. Vérifiez le code client et réessayez.');
       }
 
       const data = await response.json();
@@ -109,7 +126,7 @@ export default function App() {
 
       const initialQty = {};
       const initialStatus = {};
-      data.suggestions.forEach((item) => {
+      (data.suggestions || []).forEach((item) => {
         initialQty[item.code_article] = item.quantite_suggeree;
         initialStatus[item.code_article] = 'pending';
       });
@@ -117,38 +134,26 @@ export default function App() {
       setItemStatuses(initialStatus);
     } catch (err) {
       console.error(err);
-      setError(err.message || "Impossible de contacter l'API.");
+      setError('Client introuvable. Vérifiez le code client et réessayez.');
+      setRecommendation(null);
     } finally {
+      clearTimeout(stepTimer);
       setLoading(false);
+      setLoadingStep('');
     }
   };
-
-  useEffect(() => {
-    fetchRecommendation(selectedClient);
-  }, [selectedClient]);
 
   // ── Handlers ──
-  const handleSelectClientChip = (clientId) => {
-    setSelectedClient(clientId);
-    setSearchQuery('');
-    fetchRecommendation(clientId);
-  };
-
   const handleSearchSubmit = (e) => {
     e.preventDefault();
-    const targetCode = searchQuery.trim() ? searchQuery.trim().toUpperCase() : selectedClient;
-    if (targetCode) {
-      setSelectedClient(targetCode);
-      fetchRecommendation(targetCode);
+    const targetCode = searchQuery.trim().toUpperCase();
+    if (!targetCode) {
+      setInputError('Veuillez saisir un code client.');
+      return;
     }
-  };
-
-  const handleGenerateClick = () => {
-    const targetCode = searchQuery.trim() ? searchQuery.trim().toUpperCase() : selectedClient;
-    if (targetCode) {
-      setSelectedClient(targetCode);
-      fetchRecommendation(targetCode);
-    }
+    setSelectedClient(targetCode);
+    setHasSearched(true);
+    fetchRecommendation(targetCode);
   };
 
   const toggleStatus = (codeArticle, newStatus) => {
@@ -163,21 +168,10 @@ export default function App() {
     setQuantities((prev) => ({ ...prev, [codeArticle]: num }));
   };
 
-  const handleToggle = (key) => {
-    setAiToggles((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
-
   // ── Filtered suggestions ──
   const filteredSuggestions = (recommendation?.suggestions || []).filter(
     (item) => item.urgency_group !== 'decouvrir'
   );
-
-  // ── Filtered client chips ──
-  const filteredClients = searchQuery
-    ? availableClients.filter((c) =>
-        c.id.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : availableClients;
 
   const urgentItems = filteredSuggestions.filter((item) => item.urgency_group === 'urgent');
   const recommendedItems = filteredSuggestions.filter((item) => item.urgency_group === 'recommande');
@@ -198,7 +192,7 @@ export default function App() {
             const finalScore = item.score_final ?? item.score_confiance;
             const barWidth = Math.min((finalScore / MAX_SCORE) * 100, 100).toFixed(1);
             const status = itemStatuses[item.code_article] || 'pending';
-            
+
             const isIA = item.source_quantite === 'IA';
             const cardClass = isIA ? 'card-source-ia' : 'card-source-historique';
 
@@ -334,142 +328,200 @@ export default function App() {
         </div>
       </nav>
 
-      {/* ─── AI CONFIG BAR (Top Horizontal Strip) ─── */}
-      <div className="ai-config-bar">
-        {AI_TOGGLES.map((toggle) => (
-          <div className="ai-config-pill" key={toggle.key}>
-            <span className="ai-config-pill-label">{toggle.label}</span>
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={aiToggles[toggle.key]}
-                onChange={() => handleToggle(toggle.key)}
-              />
-              <span className="toggle-track"></span>
-            </label>
-          </div>
-        ))}
-      </div>
-
       {/* ─── MAIN ─── */}
       <div className="main-container">
 
-        {/* ── Panels Row ── */}
-        <div className="panels-row">
-          {/* Client Selection */}
-          <div className="panel-card">
-            <div className="section-header">
-              <div className="section-title">Sélection du Client</div>
-              <span style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 500 }}>{availableClients.length} clients disponibles</span>
-            </div>
-            <form onSubmit={handleSearchSubmit}>
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-                <div className="search-input-wrapper" style={{ flex: 1, marginBottom: 0 }}>
-                  <Search size={18} className="search-icon" />
+
+        {/* ── SEARCH CLIENT CARD ── */}
+        <div className="client-search-card">
+          <h2 className="search-section-subtitle">Recherche du client</h2>
+
+          <form onSubmit={handleSearchSubmit} className="search-form">
+            <div className="search-fields-row">
+              <div className="search-field-group">
+                <label htmlFor="client-code-input" className="search-field-label">
+                  Code client
+                </label>
+                <div className="search-input-box">
+                  <Search size={18} className="search-input-icon" />
                   <input
+                    id="client-code-input"
                     type="text"
-                    className="search-input"
-                    placeholder="Saisir un code client (ex: CLT091206)..."
+                    className="client-code-input"
+                    placeholder="ex: CLT091206..."
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      if (inputError) setInputError(null);
+                    }}
                   />
                 </div>
-                <button type="submit" className="btn-primary" style={{ padding: '0 16px', borderRadius: '8px' }}>
-                  Rechercher
+              </div>
+
+              <div className="search-field-group">
+                <label htmlFor="visit-date-input" className="search-field-label">
+                  Date de visite
+                </label>
+                <div className="search-input-box">
+                  <input
+                    id="visit-date-input"
+                    type="date"
+                    className="client-date-input"
+                    value={visitDate}
+                    onChange={(e) => setVisitDate(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="search-field-group button-group">
+                <button type="submit" className="btn-search-primary" disabled={loading}>
+                  {loading ? (
+                    <>
+                      <Loader2 size={18} className="spin-icon" />
+                      <span>Recherche...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Search size={18} />
+                      <span>Rechercher</span>
+                    </>
+                  )}
                 </button>
               </div>
-            </form>
-
-            <div className="client-chips-scroll">
-              {filteredClients.map((preset) => (
-                <button
-                  key={preset.id}
-                  className={`client-chip ${selectedClient === preset.id ? 'active' : ''}`}
-                  onClick={() => handleSelectClientChip(preset.id)}
-                >
-                  {preset.id}
-                </button>
-              ))}
-              {filteredClients.length === 0 && searchQuery && (
-                <div style={{ fontSize: '0.82rem', color: '#6b7280', padding: '6px 0' }}>
-                  Aucune suggestion directe dans les puces. Appuyez sur <strong>Rechercher</strong> pour tester <code>{searchQuery.toUpperCase()}</code>.
-                </div>
-              )}
             </div>
+
+            {inputError && (
+              <div className="input-error-badge">
+                {inputError}
+              </div>
+            )}
+          </form>
+
+          {/* ── COLLAPSIBLE CLIENT LIST PANEL ── */}
+          <div className="client-list-panel">
+            <button
+              type="button"
+              className="client-list-toggle"
+              onClick={() => setClientListOpen(!clientListOpen)}
+            >
+              <div className="client-list-toggle-left">
+                <Users size={16} />
+                <span>Codes clients disponibles</span>
+                {availableClients.length > 0 && (
+                  <span className="client-list-count">{availableClients.length}</span>
+                )}
+              </div>
+              {clientListOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+            {clientListOpen && (
+              <div className="client-list-body">
+                {clientListLoading ? (
+                  <div className="client-list-loading">
+                    <Loader2 size={16} className="spin-icon" />
+                    <span>Chargement...</span>
+                  </div>
+                ) : availableClients.length === 0 ? (
+                  <div className="client-list-empty">Aucun client trouvé.</div>
+                ) : (
+                  <div className="client-list-chips">
+                    {availableClients.map((code) => (
+                      <button
+                        key={code}
+                        type="button"
+                        className={`client-list-chip ${searchQuery.toUpperCase() === code ? 'active' : ''}`}
+                        onClick={() => {
+                          setSearchQuery(code);
+                          if (inputError) setInputError(null);
+                        }}
+                      >
+                        {code}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* ── Generate Button ── */}
-        <button
-          className="generate-btn"
-          onClick={handleGenerateClick}
-          disabled={loading}
-        >
-          {loading ? (
-            <>
-              <Loader2 size={20} style={{ animation: 'spin 1s linear infinite' }} />
-              Calcul en cours...
-            </>
-          ) : (
-            <>
-              <Sparkles size={20} />
-              Générer le Projet de Commande ({selectedClient})
-            </>
-          )}
-        </button>
+        {/* ── DIVIDER ── */}
+        <hr className="search-results-divider" />
 
-        {/* ── Results ── */}
-        <section>
+        {/* ── RESULTS SECTION ── */}
+        <section className="results-section">
           <div className="results-header">
             <div>
               <div className="section-title">
-                Projet de Commande — <strong>{selectedClient}</strong>
+                {selectedClient ? (
+                  <>Projet de Commande — <strong>{selectedClient}</strong></>
+                ) : (
+                  <>Résultats / Recommandations</>
+                )}
               </div>
-              <div className="section-subtitle">
-                {filteredSuggestions.length} article(s) recommandé(s)
-              </div>
+              {recommendation && hasSearched && (
+                <div className="section-subtitle">
+                  {filteredSuggestions.length} article(s) recommandé(s)
+                </div>
+              )}
             </div>
-            <button
-              className="btn-refresh"
-              onClick={() => fetchRecommendation(selectedClient)}
-              title="Actualiser"
-            >
-              <RefreshCw size={16} />
-            </button>
+            {selectedClient && recommendation && hasSearched && (
+              <button
+                className="btn-refresh"
+                onClick={() => fetchRecommendation(selectedClient)}
+                title="Actualiser"
+              >
+                <RefreshCw size={16} />
+              </button>
+            )}
           </div>
 
-          {/* Loading State */}
+          {/* 1. Initial State before search */}
+          {!hasSearched && !loading && !error && (
+            <div className="state-message initial-state">
+              <Info size={40} style={{ margin: '0 auto 12px', opacity: 0.4 }} />
+              <p>Saisissez un code client ci-dessus puis cliquez sur <strong>« Rechercher »</strong> pour lancer les recommandations IA.</p>
+            </div>
+          )}
+
+          {/* 2. Loading State */}
           {loading && (
             <div className="state-message">
               <div className="spinner"></div>
-              <p>Calcul des probabilités par XGBoost pour {selectedClient}...</p>
+              <p style={{ fontWeight: 600, color: 'var(--primary)', fontSize: '1rem' }}>
+                {loadingStep || 'Recherche du client...'}
+              </p>
+              <p style={{ fontSize: '0.82rem', color: '#6b7280', marginTop: '6px' }}>
+                Traitement du modèle de prédiction par l'IA...
+              </p>
             </div>
           )}
 
-          {/* Error State */}
-          {error && (
+          {/* 3. Error State */}
+          {!loading && error && (
             <div className="state-message" style={{ color: '#dc2626' }}>
-              <XCircle size={40} style={{ margin: '0 auto 12px' }} />
-              <p>{error}</p>
-              <button
-                className="btn-retry"
-                onClick={() => fetchRecommendation(selectedClient)}
-              >
-                Réessayer
-              </button>
+              <XCircle size={44} style={{ margin: '0 auto 12px' }} />
+              <p style={{ fontWeight: 600, fontSize: '0.98rem', marginBottom: '8px' }}>{error}</p>
+              {selectedClient && (
+                <button
+                  className="btn-retry"
+                  onClick={() => fetchRecommendation(selectedClient)}
+                >
+                  Réessayer
+                </button>
+              )}
             </div>
           )}
 
-          {/* Empty State */}
-          {!loading && !error && filteredSuggestions.length === 0 && (
+          {/* 4. Empty Results State */}
+          {hasSearched && !loading && !error && filteredSuggestions.length === 0 && (
             <div className="state-message">
               <Info size={40} style={{ margin: '0 auto 12px', opacity: 0.4 }} />
-              <p>Aucun produit recommandé pour ce client / cette catégorie.</p>
+              <p>Aucun produit recommandé pour le client {selectedClient}.</p>
             </div>
           )}
 
-          {/* Results Grid */}
-          {!loading && !error && filteredSuggestions.length > 0 && (
+          {/* 5. Results Grid */}
+          {hasSearched && !loading && !error && filteredSuggestions.length > 0 && (
             <div className="urgency-sections-wrapper">
               {renderCardList(urgentItems, "URGENT — Réapprovisionnement en retard", "⚡", "urgency-urgent")}
               {renderCardList(recommendedItems, "RECOMMANDÉ — Forte probabilité d'achat", "✅", "urgency-recommande")}
@@ -564,30 +616,6 @@ export default function App() {
         </div>
       )}
 
-      {/* ─── CHATBOT FAB ─── */}
-      <button className="chatbot-fab" onClick={() => setChatOpen(!chatOpen)}>
-        {chatOpen ? <X size={24} /> : <Mic size={24} />}
-      </button>
-
-      {chatOpen && (
-        <div className="chatbot-panel">
-          <div className="chatbot-header">
-            <span className="chatbot-title">🎤 Assistant Vocal IA</span>
-            <button className="chatbot-close" onClick={() => setChatOpen(false)}>
-              ✕
-            </button>
-          </div>
-          <div className="chatbot-body">
-            <div>
-              <Mic size={40} style={{ color: '#d1d5db', marginBottom: '16px' }} />
-              <p>Fonctionnalité vocale à venir...</p>
-              <p style={{ fontSize: '0.78rem', marginTop: '8px', color: '#9ca3af' }}>
-                L'assistant vocal vous permettra d'interagir avec l'IA en langage naturel.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 }

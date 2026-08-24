@@ -197,6 +197,38 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
     else:
         df_client = df_client.drop_duplicates(subset=["code_article"], keep="last")
 
+    # ── Handle Dynamic visit_date if provided ──
+    if request.visit_date:
+        try:
+            visit_timestamp = pd.to_datetime(request.visit_date)
+            default_ref_date = pd.to_datetime("2026-06-22")
+            
+            # Reconstruct last_date (date of last purchase)
+            last_date = default_ref_date - pd.to_timedelta(df_client["recency_days"], unit="D")
+            # Calculate new recency_days relative to visit_date
+            new_recency_days = (visit_timestamp - last_date).dt.days
+            df_client["recency_days"] = np.clip(new_recency_days, 0, None)
+            df_client["recency_relative"] = df_client["recency_days"] / df_client["avg_delay_days"].replace(0, 30.0)
+            
+            # Update current_month_coef based on visit_date month
+            SEASONAL_COEF = {
+                1: 0.85, 2: 0.90, 3: 1.10, 4: 1.20, 5: 1.00, 6: 1.05,
+                7: 1.25, 8: 1.20, 9: 1.15, 10: 1.00, 11: 1.10, 12: 1.30,
+            }
+            df_client["current_month_coef"] = df_client["current_month_coef"].apply(
+                lambda _: SEASONAL_COEF[visit_timestamp.month]
+            )
+            
+            # Reconstruct first_order_date and update is_new_product flag
+            first_order_date = default_ref_date - pd.to_timedelta(df_client["days_since_first_order"].fillna(365), unit="D")
+            new_days_since_first_order = (visit_timestamp - first_order_date).dt.days
+            df_client["days_since_first_order"] = np.clip(new_days_since_first_order, 0, None)
+            df_client["is_new_product"] = df_client["days_since_first_order"] <= 90
+            
+            logger.info(f"Dynamically adjusted features for client={client_id} relative to visit_date={request.visit_date}")
+        except Exception as e:
+            logger.error(f"Failed to adjust features for visit_date: {e}", exc_info=True)
+
     if df_client.empty:
         logger.warning(f"No history found for client_id='{client_id}'")
         return RecommendResponse(
