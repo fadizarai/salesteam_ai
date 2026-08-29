@@ -11,10 +11,29 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SEASONAL_COEF = {
-    1: 0.85, 2: 0.90, 3: 1.10, 4: 1.20, 5: 1.00, 6: 1.05,
-    7: 1.25, 8: 1.20, 9: 1.15, 10: 1.00, 11: 1.10, 12: 1.30,
-}
+def build_categorical_quarterly_index(df: pd.DataFrame) -> dict:
+    """
+    Computes quarterly seasonal index per category:
+    coef[categorie][quarter] = mean(quantite | categorie, quarter) / mean(quantite | categorie, all quarters)
+    Excludes the outlier week of 2024-10-13 to 2024-10-20 (client CLT105703 massive one-off order).
+    """
+    df_clean = df.copy()
+    df_clean["date_commande"] = pd.to_datetime(df_clean["date_commande"])
+    
+    # Exclude 2024-10-13 to 2024-10-20 anomaly
+    mask_outlier = (df_clean["date_commande"] >= "2024-10-13") & (df_clean["date_commande"] <= "2024-10-20")
+    df_clean = df_clean[~mask_outlier]
+    
+    df_clean["trimestre"] = df_clean["date_commande"].dt.quarter
+    df_clean["categorie"] = df_clean["categorie"].fillna("UNKNOWN").astype(str)
+    
+    cat_q_means = df_clean.groupby(["categorie", "trimestre"])["quantite"].mean()
+    cat_all_means = df_clean.groupby("categorie")["quantite"].mean()
+    
+    ratio = (cat_q_means / (cat_all_means + 1e-6)).unstack().fillna(1.0)
+    # Clip to avoid extreme ratios
+    ratio = ratio.clip(0.5, 2.0)
+    return ratio.to_dict(orient="index")
 
 
 def build_feature_matrix(
@@ -69,23 +88,13 @@ def build_feature_matrix(
         new_avg = series.iloc[mid:].mean()
         return (new_avg - old_avg) / (old_avg + 1e-6)
 
-    g1["trend"] = grp["quantite"].apply(compute_trend)
+    # Capped trend between -0.9 and 3.0 to prevent outlier explosion
+    g1["trend"] = grp["quantite"].apply(compute_trend).clip(-0.9, 3.0)
     g1 = g1.reset_index()
 
-    logger.info("Computing Group 2 features (Seasonality)...")
-    df["month_coef"] = df["mois"].map(SEASONAL_COEF)
-
-    g2 = pd.DataFrame()
-    g2_grp = df.groupby(["code_client", "code_article"])
-    g2["avg_seasonal_coef"] = g2_grp["month_coef"].mean()
-
-    monthly_means = df.groupby(["code_client", "code_article", "mois"])["quantite"].mean().reset_index()
-    best_months = monthly_means.sort_values(by="quantite", ascending=False).drop_duplicates(
-        subset=["code_client", "code_article"]
-    ).rename(columns={"mois": "best_month"})[["code_client", "code_article", "best_month"]]
-
-    g2 = g2.reset_index().merge(best_months, on=["code_client", "code_article"], how="left")
-    g2["current_month_coef"] = SEASONAL_COEF[reference_date.month]
+    logger.info("Computing Group 2 features (Categorical Quarterly Seasonality)...")
+    cat_quarterly_index = build_categorical_quarterly_index(df)
+    ref_quarter = int(reference_date.quarter)
 
     logger.info("Computing Group 3 features (Geography)...")
     g3 = df.groupby("code_client").agg(
@@ -111,6 +120,13 @@ def build_feature_matrix(
     g4["is_new_product"] = g4["days_since_first_order"] <= 90
     g4 = g4.drop(columns=["first_order_date"])
 
+    # Map cat_quarterly_coef on product category
+    def map_quarterly_coef(cat):
+        cat_str = str(cat) if pd.notna(cat) else "UNKNOWN"
+        return float(cat_quarterly_index.get(cat_str, {}).get(ref_quarter, 1.0))
+
+    g4["cat_quarterly_coef"] = g4["categorie"].apply(map_quarterly_coef)
+
     logger.info("Computing Group 5 features (Client profile)...")
     g5 = df.groupby("code_client").agg(
         client_total_products=("code_article", "nunique"),
@@ -124,8 +140,7 @@ def build_feature_matrix(
     g5 = g5.merge(client_basket, on="code_client", how="left")
 
     logger.info("Merging all feature groups...")
-    features = g1.merge(g2, on=["code_client", "code_article"], how="left")
-    features = features.merge(g3, on="code_client", how="left")
+    features = g1.merge(g3, on="code_client", how="left")
     features = features.merge(g4, on="code_article", how="left")
     features = features.merge(g5, on="code_client", how="left")
 
@@ -135,7 +150,7 @@ def build_feature_matrix(
         "frequency", "last_qty", "recency_days",
         "avg_delay_days", "recency_relative", "trend",
         "company_encoded",
-        "current_month_coef", "avg_seasonal_coef", "best_month",
+        "cat_quarterly_coef",
         "has_gps", "latitude", "longitude",
         "categorie", "designation", "is_bulk_product",
         "nb_clients", "days_since_first_order", "is_new_product",
@@ -172,7 +187,7 @@ def build_features_for_negative_pairs(
         feature_matrix
         .drop_duplicates(subset=["code_article"])
         [["code_article", "categorie", "designation", "is_bulk_product",
-          "nb_clients", "days_since_first_order", "is_new_product"]]
+          "nb_clients", "days_since_first_order", "is_new_product", "cat_quarterly_coef"]]
     )
 
     neg = negative_pairs[["code_client", "code_article"]].copy()
@@ -190,10 +205,7 @@ def build_features_for_negative_pairs(
     neg["avg_delay_days"] = 999.0
     neg["recency_relative"] = 9999.0 / 999.0
     neg["trend"] = 0.0
-
-    neg["current_month_coef"] = SEASONAL_COEF[reference_date.month]
-    neg["avg_seasonal_coef"] = 1.0
-    neg["best_month"] = -1
+    neg["cat_quarterly_coef"] = 1.0
 
     cols_order = [
         "code_client", "code_article",
@@ -201,7 +213,7 @@ def build_features_for_negative_pairs(
         "frequency", "last_qty", "recency_days",
         "avg_delay_days", "recency_relative", "trend",
         "company_encoded",
-        "current_month_coef", "avg_seasonal_coef", "best_month",
+        "cat_quarterly_coef",
         "has_gps", "latitude", "longitude",
         "categorie", "designation", "is_bulk_product",
         "nb_clients", "days_since_first_order", "is_new_product",

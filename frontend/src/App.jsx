@@ -35,6 +35,85 @@ const AI_TOGGLES = [
   { key: 'use_localisation', label: 'Localisation GPS' },
 ];
 
+// ── Maps each of the 4 section titles to an accent colour ──
+const SECTION_META = {
+  'Pourquoi ce produit ?': { color: '#1a56e8', bg: 'rgba(26,86,232,0.06)', border: 'rgba(26,86,232,0.15)' },
+  'Pourquoi cette quantité ?': { color: '#059669', bg: 'rgba(5,150,105,0.06)', border: 'rgba(5,150,105,0.18)' },
+  'Pourquoi ce classement ?': { color: '#d97706', bg: 'rgba(217,119,6,0.06)', border: 'rgba(217,119,6,0.18)' },
+  "Pourquoi ce niveau d'urgence ?": { color: '#dc2626', bg: 'rgba(220,38,38,0.06)', border: 'rgba(220,38,38,0.18)' },
+};
+
+/**
+ * Parses "## Title\nBody" markdown sections and renders each as a styled block.
+ * Handles both "Pourquoi cette quantité ?" (with accent) and ASCII variants.
+ */
+function DetailedSections({ text }) {
+  if (!text) return null;
+
+  // Split on ## headings (keep the title in each chunk)
+  const rawSections = text.split(/\n(?=## )/).filter(Boolean);
+
+  const sections = rawSections.map((chunk) => {
+    const newlineIdx = chunk.indexOf('\n');
+    if (newlineIdx === -1) return { title: chunk.replace(/^##\s*/, '').trim(), body: '' };
+    const title = chunk.slice(0, newlineIdx).replace(/^##\s*/, '').trim();
+    const body = chunk.slice(newlineIdx + 1).trim();
+    return { title, body };
+  });
+
+  if (sections.length === 0) {
+    // Fallback: render as plain pre-formatted text
+    return (
+      <div style={{ whiteSpace: 'pre-line', fontSize: '0.875rem', color: '#374151', lineHeight: 1.65 }}>
+        {text}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {sections.map(({ title, body }, i) => {
+        // Match regardless of accent differences (é vs e)
+        const metaKey = Object.keys(SECTION_META).find(
+          (k) => k.toLowerCase().replace(/[éè]/g, 'e') === title.toLowerCase().replace(/[éè]/g, 'e')
+        );
+        const meta = SECTION_META[metaKey] ?? {
+          color: '#6b7280', bg: 'rgba(107,114,128,0.06)', border: 'rgba(107,114,128,0.2)',
+        };
+
+        return (
+          <div
+            key={i}
+            style={{
+              borderRadius: 10,
+              background: meta.bg,
+              border: `1px solid ${meta.border}`,
+              padding: '13px 16px',
+            }}
+          >
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 7,
+              marginBottom: body ? 7 : 0,
+            }}>
+              <span style={{ fontWeight: 700, fontSize: '0.8rem', color: meta.color, letterSpacing: '0.02em' }}>
+                {title}
+              </span>
+            </div>
+            {body && (
+              <p style={{
+                margin: 0, fontSize: '0.84rem', color: '#374151',
+                lineHeight: 1.65, whiteSpace: 'pre-line',
+              }}>
+                {body}
+              </p>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function App() {
   const [company, setCompany] = useState('LSAT');
   const [selectedClient, setSelectedClient] = useState('');
@@ -56,11 +135,52 @@ export default function App() {
   const [quantities, setQuantities] = useState({});
   const [itemStatuses, setItemStatuses] = useState({});
   const [selectedItemForModal, setSelectedItemForModal] = useState(null);
+  const [detailedExplanation, setDetailedExplanation] = useState(null);
+  const [detailedLoading, setDetailedLoading] = useState(false);
+  const [detailedError, setDetailedError] = useState(null);
   const [recommendation, setRecommendation] = useState(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [availableClients, setAvailableClients] = useState([]);
   const [clientListOpen, setClientListOpen] = useState(false);
   const [clientListLoading, setClientListLoading] = useState(true);
+
+  // ── Fetch detailed explanation when a card modal opens ──
+  useEffect(() => {
+    if (!selectedItemForModal) {
+      // Reset when modal closes
+      setDetailedExplanation(null);
+      setDetailedLoading(false);
+      setDetailedError(null);
+      return;
+    }
+    let cancelled = false;
+    setDetailedExplanation(null);
+    setDetailedError(null);
+    setDetailedLoading(true);
+    fetch(`${API_BASE_URL}/explain-detailed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: selectedClient,
+        code_article: selectedItemForModal.code_article,
+      }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled) setDetailedExplanation(data.explication_detaillee);
+      })
+      .catch(() => {
+        if (!cancelled) setDetailedError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setDetailedLoading(false);
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedItemForModal]);
 
   // ── Load Client List from API on Mount ──
   useEffect(() => {
@@ -378,12 +498,12 @@ export default function App() {
                   {loading ? (
                     <>
                       <Loader2 size={18} className="spin-icon" />
-                      <span>Recherche...</span>
+                      <span>Génération...</span>
                     </>
                   ) : (
                     <>
-                      <Search size={18} />
-                      <span>Rechercher</span>
+                      <Sparkles size={18} />
+                      <span>Générer l'offre</span>
                     </>
                   )}
                 </button>
@@ -479,7 +599,7 @@ export default function App() {
           {!hasSearched && !loading && !error && (
             <div className="state-message initial-state">
               <Info size={40} style={{ margin: '0 auto 12px', opacity: 0.4 }} />
-              <p>Saisissez un code client ci-dessus puis cliquez sur <strong>« Rechercher »</strong> pour lancer les recommandations IA.</p>
+              <p>Saisissez un code client ci-dessus puis cliquez sur <strong>« Générer l'offre »</strong> pour lancer les recommandations IA.</p>
             </div>
           )}
 
@@ -592,14 +712,41 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="modal-llm-quote-box">
-                <div className="llm-quote-header">
-                  <Sparkles size={16} color="#1a56e8" />
-                  <span>Explication IA du Recommandation</span>
-                </div>
-                <p className="llm-quote-text">
-                  "{selectedItemForModal.explication}"
-                </p>
+              {/* ── Detailed explanation area ── */}
+              <div className="modal-llm-quote-box" style={{ padding: 0, background: 'none', border: 'none' }}>
+                {detailedLoading && (
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '18px 20px', borderRadius: 12,
+                    background: 'rgba(26,86,232,0.06)', border: '1px solid rgba(26,86,232,0.15)',
+                  }}>
+                    <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', color: '#1a56e8', flexShrink: 0 }} />
+                    <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>Analyse en cours — génération de l'explication détaillée...</span>
+                  </div>
+                )}
+
+                {detailedError && !detailedLoading && (
+                  <div style={{
+                    padding: '14px 18px', borderRadius: 10,
+                    background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.2)',
+                    color: '#b91c1c', fontSize: '0.875rem',
+                  }}>
+                    Analyse détaillée indisponible pour le moment.
+                  </div>
+                )}
+
+                {detailedExplanation && !detailedLoading && (
+                  <DetailedSections text={detailedExplanation} />
+                )}
+
+                {!detailedLoading && !detailedError && !detailedExplanation && (
+                  <div className="llm-quote-header" style={{ marginBottom: 0 }}>
+                    <Sparkles size={16} color="#1a56e8" />
+                    <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>
+                      &ldquo;{selectedItemForModal.explication}&rdquo;
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
 

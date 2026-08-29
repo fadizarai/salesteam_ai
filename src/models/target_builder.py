@@ -25,10 +25,12 @@ This produces realistic positive rates (~20-40%) and makes features
 like recency_relative, trend, avg_delay_days actually discriminative.
 """
 
-import pandas as pd
-import numpy as np
+import json
 import logging
 from pathlib import Path
+import pandas as pd
+import numpy as np
+from src.features.feature_engineering import build_categorical_quarterly_index
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,7 @@ def _compute_product_features(
     client_id: str,
     product_id: str,
     visit_date: pd.Timestamp,
+    cat_quarterly_index: dict = None,
 ) -> dict:
     """
     Compute all features for a (client, product) pair from history
@@ -81,33 +84,27 @@ def _compute_product_features(
     avg_delay_days = max(avg_delay_days, 1.0)
     recency_relative = recency_days / avg_delay_days
 
-    # Trend: compare first half vs second half of order history
+    # Trend: compare first half vs second half of order history (capped at [-0.9, 3.0])
     n = len(qtys)
     if n >= 2:
         mid = n // 2
         old_avg = np.mean(qtys[:mid]) if mid > 0 else 0
         new_avg = np.mean(qtys[mid:]) if (n - mid) > 0 else 0
-        trend = float((new_avg - old_avg) / (old_avg + 1e-6))
+        trend = float(np.clip((new_avg - old_avg) / (old_avg + 1e-6), -0.9, 3.0))
     else:
         trend = 0.0
 
-    # Seasonal coefficient (monthly)
-    SEASONAL_COEF = {
-        1: 0.85, 2: 0.90, 3: 1.10, 4: 1.20, 5: 1.00, 6: 1.05,
-        7: 1.25, 8: 1.20, 9: 1.15, 10: 1.00, 11: 1.10, 12: 1.30,
-    }
-    monthly_qtys = prod_hist.groupby(prod_hist["date_commande"].dt.month)["quantite"].mean()
-    avg_seasonal_coef = float(
-        monthly_qtys.index.map(SEASONAL_COEF).values @ monthly_qtys.values / max(monthly_qtys.sum(), 1)
-    ) if len(monthly_qtys) > 0 else 1.0
-
-    best_month = int(monthly_qtys.idxmax()) if len(monthly_qtys) > 0 else -1
-    current_month_coef = SEASONAL_COEF.get(visit_date.month, 1.0)
+    cat_name = str(prod_hist["categorie"].iloc[0]) if "categorie" in prod_hist.columns and not prod_hist["categorie"].empty else "UNKNOWN"
+    quarter = int(visit_date.quarter)
+    if cat_quarterly_index:
+        cat_quarterly_coef = float(cat_quarterly_index.get(cat_name, {}).get(quarter, 1.0))
+    else:
+        cat_quarterly_coef = 1.0
 
     return {
         "code_client": client_id,
         "code_article": product_id,
-        "categorie": prod_hist["categorie"].iloc[0] if "categorie" in prod_hist.columns and not prod_hist["categorie"].empty else "UNKNOWN",
+        "categorie": cat_name,
         "designation": prod_hist["designation"].iloc[0] if "designation" in prod_hist.columns and not prod_hist["designation"].empty else "UNKNOWN",
         "avg_qty": avg_qty,
         "median_qty": median_qty,
@@ -121,9 +118,7 @@ def _compute_product_features(
         "avg_delay_days": avg_delay_days,
         "recency_relative": recency_relative,
         "trend": trend,
-        "avg_seasonal_coef": avg_seasonal_coef,
-        "best_month": best_month,
-        "current_month_coef": current_month_coef,
+        "cat_quarterly_coef": cat_quarterly_coef,
         "visit_date": visit_date,
     }
 
@@ -155,6 +150,17 @@ def build_visit_level_dataset(
     df = df.sort_values(["code_client", "date_commande"]).reset_index(drop=True)
 
     logger.info(f"Building visit-level dataset from {len(df)} rows...")
+
+    # Precompute categorical quarterly index
+    cat_quarterly_index = build_categorical_quarterly_index(df)
+    index_save_path = "data/processed/cat_quarterly_index.json"
+    try:
+        Path(index_save_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(index_save_path, "w", encoding="utf-8") as f:
+            json.dump(cat_quarterly_index, f, indent=2)
+        logger.info(f"Saved categorical quarterly index to {index_save_path}")
+    except Exception as e:
+        logger.warning(f"Could not save {index_save_path}: {e}")
 
     # Get one row per invoice (unique visit)
     invoices = (
@@ -206,7 +212,7 @@ def build_visit_level_dataset(
         # Build one row per known product
         for product_id in known_products:
             features = _compute_product_features(
-                history, client_id, product_id, visit_date
+                history, client_id, product_id, visit_date, cat_quarterly_index=cat_quarterly_index
             )
             if features is None:
                 continue

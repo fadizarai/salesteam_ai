@@ -1118,10 +1118,15 @@ body {
   background: #ffffff;
   border-radius: 20px;
   width: 100%;
-  max-width: 520px;
+  max-width: 750px; /* Increased to fit the 4 sections comfortably */
+  min-width: 350px;
+  max-height: 90vh;
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.18);
   border: 1px solid var(--border);
   overflow: hidden;
+  resize: both; /* Allow dynamic resizing by user */
+  display: flex;
+  flex-direction: column;
   animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -1137,6 +1142,7 @@ body {
   align-items: center;
   justify-content: space-between;
   background: #fafbfc;
+  flex-shrink: 0;
 }
 
 .modal-title-row {
@@ -1190,6 +1196,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  overflow-y: auto;
+  flex: 1;
 }
 
 .modal-product-box {
@@ -1272,6 +1280,7 @@ body {
   padding: 16px 24px;
   border-top: 1px solid var(--border);
   background: #fafbfc;
+  flex-shrink: 0;
 }
 
 /* ─── MOBILE RESPONSIVE ─── */

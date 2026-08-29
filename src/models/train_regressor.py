@@ -184,8 +184,7 @@ def run_regressor_pipeline(
         "frequency",
         "recency_days",
         "avg_delay_days",
-        "current_month_coef",
-        "avg_seasonal_coef"
+        "cat_quarterly_coef"
     ]
 
     if "median_qty" not in df.columns:

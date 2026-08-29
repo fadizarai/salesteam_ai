@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-08-12T02:49:41.648260",
+  "trained_at": "2026-08-26T13:46:13.681308",
   "feature_columns": [
     "frequency",
     "total_qty",
@@ -9,15 +9,14 @@
     "recency_relative",
     "std_qty",
     "min_qty",
-    "best_month",
-    "avg_seasonal_coef"
+    "cat_quarterly_coef"
   ],
-  "n_features": 10,
-  "best_iteration": 24,
+  "n_features": 9,
+  "best_iteration": 19,
   "scale_pos_weight": 29.356439906507564,
   "metrics": {
-    "roc_auc": 0.8608035653469498,
-    "pr_auc": 0.08774108906388409
+    "roc_auc": 0.8668283407820893,
+    "pr_auc": 0.09023489961315437
   },
   "train_clients": 544,
   "test_clients": 288

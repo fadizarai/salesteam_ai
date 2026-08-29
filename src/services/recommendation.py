@@ -38,11 +38,34 @@ MODEL_PATH = "src/models/classifier_lsat.joblib"
 REGRESSOR_PATH = "src/models/regressor_lsat.joblib"
 ENCODER_PATH = "src/models/encoder_categorie.joblib"
 DATA_PATH = "data/processed/training_set.csv"
+CAT_INDEX_PATH = "data/processed/cat_quarterly_index.json"
 
 _model = None
 _regressor = None
 _encoder = None
 _df_data = None
+_cat_quarterly_index = None
+
+# Per-client cache of the last RecommendResponse (plain dict).
+# Key: client_id  |  Value: recommendation_response dict
+# Allows /api/explain-detailed to retrieve context without re-running ML.
+_last_response_cache: dict[str, dict] = {}
+
+
+def _get_cat_quarterly_index() -> dict:
+    global _cat_quarterly_index
+    if _cat_quarterly_index is None:
+        if os.path.exists(CAT_INDEX_PATH):
+            try:
+                import json
+                with open(CAT_INDEX_PATH, "r", encoding="utf-8") as f:
+                    _cat_quarterly_index = json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to load {CAT_INDEX_PATH}: {e}")
+                _cat_quarterly_index = {}
+        else:
+            _cat_quarterly_index = {}
+    return _cat_quarterly_index
 
 
 def _get_artifacts():
@@ -180,9 +203,19 @@ def get_available_clients(limit: int = None) -> list[dict]:
     return client_counts.to_dict(orient="records")
 
 
-def recommend(request: RecommendRequest) -> RecommendResponse:
+def recommend(request: RecommendRequest, _skip_llm: bool = False) -> RecommendResponse:
     """
     Full recommendation pipeline: features -> predictions -> explanations.
+
+    Parameters
+    ----------
+    request : RecommendRequest
+        The client request object.
+    _skip_llm : bool
+        Internal flag. When True, all explain_suggestion() calls use the
+        rule-based fallback directly without any HuggingFace API call.
+        Used by get_detailed_explanation() when warming the response cache
+        to avoid consuming LLM quota on short-form card explanations.
     """
     model, regressor, encoder = _get_artifacts()
     df_all = _get_dataset()
@@ -210,20 +243,19 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
             df_client["recency_days"] = np.clip(new_recency_days, 0, None)
             df_client["recency_relative"] = df_client["recency_days"] / df_client["avg_delay_days"].replace(0, 30.0)
             
-            # Update current_month_coef based on visit_date month
-            SEASONAL_COEF = {
-                1: 0.85, 2: 0.90, 3: 1.10, 4: 1.20, 5: 1.00, 6: 1.05,
-                7: 1.25, 8: 1.20, 9: 1.15, 10: 1.00, 11: 1.10, 12: 1.30,
-            }
-            df_client["current_month_coef"] = df_client["current_month_coef"].apply(
-                lambda _: SEASONAL_COEF[visit_timestamp.month]
+            # Update cat_quarterly_coef based on visit_date quarter
+            cat_index = _get_cat_quarterly_index()
+            quarter = int(visit_timestamp.quarter)
+            df_client["cat_quarterly_coef"] = df_client["categorie"].apply(
+                lambda cat: float(cat_index.get(str(cat), {}).get(str(quarter), cat_index.get(str(cat), {}).get(quarter, 1.0)))
             )
             
-            # Reconstruct first_order_date and update is_new_product flag
-            first_order_date = default_ref_date - pd.to_timedelta(df_client["days_since_first_order"].fillna(365), unit="D")
-            new_days_since_first_order = (visit_timestamp - first_order_date).dt.days
-            df_client["days_since_first_order"] = np.clip(new_days_since_first_order, 0, None)
-            df_client["is_new_product"] = df_client["days_since_first_order"] <= 90
+            # Reconstruct first_order_date and update is_new_product flag if present
+            if "days_since_first_order" in df_client.columns:
+                first_order_date = default_ref_date - pd.to_timedelta(df_client["days_since_first_order"].fillna(365), unit="D")
+                new_days_since_first_order = (visit_timestamp - first_order_date).dt.days
+                df_client["days_since_first_order"] = np.clip(new_days_since_first_order, 0, None)
+                df_client["is_new_product"] = df_client["days_since_first_order"] <= 90
             
             logger.info(f"Dynamically adjusted features for client={client_id} relative to visit_date={request.visit_date}")
         except Exception as e:
@@ -234,10 +266,6 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
         return RecommendResponse(
             client_id=client_id,
             commercial_id=request.commercial_id,
-            # TODO: nb_suggestions actuellement non lu par recommendation.py —
-            # les plafonds urgent(7)/recommande(5) restent fixes. Décision en attente
-            # sur un usage futur (ex: limite d'affichage frontend indépendante du
-            # split urgent/recommandé).
             nb_suggestions=0,
             suggestions=[],
             generated_at=datetime.now().isoformat(),
@@ -254,6 +282,13 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
     if "median_qty" not in df_client.columns:
         df_client["median_qty"] = df_client["avg_qty"]
 
+    if "cat_quarterly_coef" not in df_client.columns:
+        cat_index = _get_cat_quarterly_index()
+        ref_q = int(pd.to_datetime("2026-06-22").quarter)
+        df_client["cat_quarterly_coef"] = df_client["categorie"].apply(
+            lambda cat: float(cat_index.get(str(cat), {}).get(str(ref_q), cat_index.get(str(cat), {}).get(ref_q, 1.0)))
+        )
+
     # Define explicit features for classifier and regressor to match training
     classifier_features = [
         "frequency",
@@ -264,8 +299,7 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
         "recency_relative",
         "std_qty",
         "min_qty",
-        "best_month",
-        "avg_seasonal_coef"
+        "cat_quarterly_coef"
     ]
     regressor_features = [
         "avg_qty",
@@ -277,8 +311,7 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
         "frequency",
         "recency_days",
         "avg_delay_days",
-        "current_month_coef",
-        "avg_seasonal_coef"
+        "cat_quarterly_coef"
     ]
 
     # ── Regressor: predict quantities for all rows now, reuse for candidates ──
@@ -400,20 +433,32 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
         is_new = bool(row.get("is_new_product", False))
 
         # Explanation generation
-        from src.services.explanation import explain_suggestion
-        explication = explain_suggestion(
-            client_id=client_id,
-            code_article=str(row["code_article"]),
-            designation=designation,
-            categorie=cat,
-            quantite_suggeree=sugg_qty,
-            score_confiance=prob,
-            recency_days=int(recency),
-            frequency=freq,
-            trend=float(row.get("trend", 0)),
-            is_new_product=is_new,
-            qty_source=qty_source,
-        )
+        from src.services.explanation import explain_suggestion, _rule_based_explanation
+        if _skip_llm:
+            explication = _rule_based_explanation(
+                designation=designation,
+                quantite_suggeree=sugg_qty,
+                recency_days=int(recency),
+                frequency=freq,
+                trend=float(row.get("trend", 0)),
+                is_new_product=is_new,
+                score_confiance=prob,
+                qty_source=qty_source,
+            )
+        else:
+            explication = explain_suggestion(
+                client_id=client_id,
+                code_article=str(row["code_article"]),
+                designation=designation,
+                categorie=cat,
+                quantite_suggeree=sugg_qty,
+                score_confiance=prob,
+                recency_days=int(recency),
+                frequency=freq,
+                trend=float(row.get("trend", 0)),
+                is_new_product=is_new,
+                qty_source=qty_source,
+            )
 
         suggestions.append(
             ProductSuggestion(
@@ -431,10 +476,14 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
                 explication=explication,
                 urgency_group=urg_grp,
                 recency_relative=round(recency_rel, 2),
+                recency_days=int(recency),
+                avg_delay_days=float(row.get("avg_delay_days", 0)),
+                trend=float(row.get("trend", 0)),
+                frequency=int(freq),
             )
         )
 
-    return RecommendResponse(
+    response = RecommendResponse(
         client_id=client_id,
         commercial_id=request.commercial_id,
         # TODO: nb_suggestions actuellement non lu par recommendation.py —
@@ -445,5 +494,93 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
         suggestions=suggestions,
         generated_at=datetime.now().isoformat(),
     )
+
+    # Cache the response so get_detailed_explanation() can reuse it
+    _last_response_cache[client_id] = response.model_dump()
+
+    return response
+
+
+def get_detailed_explanation(
+    client_id: str,
+    code_article: str,
+) -> str:
+    """
+    Generate a detailed 4-part explanation for a single (client, product) pair,
+    on-demand and independently of /api/recommend.
+
+    Strategy
+    --------
+    1. Retrieve the last cached RecommendResponse for this client (stored by
+       recommend() on every call). If the cache is cold, run recommend() with
+       a minimal default request to warm it first.
+    2. Call retrieve_deep_context() to assemble all verifiable evidence.
+    3. Call explain_suggestion_detailed() to generate the 4-part LLM text.
+
+    Parameters
+    ----------
+    client_id : str
+        Client identifier (e.g. "CLT070730").
+    code_article : str
+        Article code (e.g. "25078RA3EABLACK4/128").
+
+    Returns
+    -------
+    str
+        4-part Markdown explanation, or an error message string if the
+        product is not found in the last recommendation for this client.
+    """
+    from src.services.deep_context import retrieve_deep_context
+    from src.services.explanation import explain_suggestion_detailed
+    from src.api.schemas import RecommendRequest
+
+    # ── Step 1: get or warm the cached response ───────────────────────────
+    if client_id not in _last_response_cache:
+        logger.info(
+            "get_detailed_explanation: cache miss for client=%s — warming with default recommend()",
+            client_id,
+        )
+        try:
+            default_request = RecommendRequest(
+                client_id=client_id,
+                commercial_id="system",
+            )
+            recommend(default_request, _skip_llm=True)  # populates _last_response_cache[client_id]
+        except Exception as exc:
+            logger.error(
+                "get_detailed_explanation: failed to warm cache for client=%s: %s",
+                client_id, exc,
+            )
+            return (
+                f"Impossible de générer l'explication : le client '{client_id}' "
+                "n'a pas été trouvé dans le système."
+            )
+
+    recommendation_response = _last_response_cache.get(client_id, {})
+
+    # ── Step 2: verify the article appears in the cached response ─────────
+    suggestions = recommendation_response.get("suggestions", [])
+    article_codes = [s.get("code_article") for s in suggestions]
+    if code_article not in article_codes:
+        logger.warning(
+            "get_detailed_explanation: article '%s' not in last response for client '%s'. "
+            "Available: %s",
+            code_article, client_id, article_codes,
+        )
+        return (
+            f"Ce produit ({code_article}) ne figure pas dans la dernière recommandation "
+            f"générée pour le client {client_id}. "
+            "Veuillez relancer une recommandation avant de demander l'explication détaillée."
+        )
+
+    # ── Step 3: assemble verifiable evidence ─────────────────────────────
+    context = retrieve_deep_context(
+        client_id=client_id,
+        code_article=code_article,
+        recommendation_response=recommendation_response,
+    )
+
+    # ── Step 4: generate 4-part explanation ──────────────────────────────
+    return explain_suggestion_detailed(context)
 
 

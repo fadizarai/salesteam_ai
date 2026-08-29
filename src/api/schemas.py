@@ -47,6 +47,10 @@ class ProductSuggestion(BaseModel):
     explication:        str
     urgency_group:      str     # "urgent", "recommande", "decouvrir"
     recency_relative:   float
+    recency_days:       Optional[int] = None
+    avg_delay_days:     Optional[float] = None
+    trend:              Optional[float] = None
+    frequency:          Optional[int] = None
 
 
 class RecommendResponse(BaseModel):
@@ -60,6 +64,21 @@ class RecommendResponse(BaseModel):
     nb_suggestions: int
     suggestions:    list[ProductSuggestion]
     generated_at:   str
+
+
+
+class DetailedExplanationRequest(BaseModel):
+    """Request a detailed, 4-part explanation for one specific product card."""
+    client_id:    str = Field(..., example="CLT070730")
+    code_article: str = Field(..., example="25078RA3EABLACK4/128")
+
+
+class DetailedExplanationResponse(BaseModel):
+    """Detailed explanation response for a single (client, product) pair."""
+    client_id:             str
+    code_article:          str
+    explication_detaillee: str   # 4-part Markdown text produced by explain_suggestion_detailed()
+    generated_at:          str
 
 
 class FeedbackItem(BaseModel):

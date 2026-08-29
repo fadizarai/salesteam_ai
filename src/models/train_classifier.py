@@ -71,8 +71,7 @@ def run_training_pipeline(
         "recency_relative",
         "std_qty",
         "min_qty",
-        "best_month",
-        "avg_seasonal_coef"
+        "cat_quarterly_coef"
     ]
 
     bool_cols = df[feature_cols].select_dtypes(include=["bool"]).columns

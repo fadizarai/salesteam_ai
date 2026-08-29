@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-08-18T03:48:40.656408",
+  "trained_at": "2026-08-26T13:46:42.163418",
   "objective": "reg:absoluteerror",
   "use_log_transform": false,
   "feature_columns": [
@@ -12,27 +12,26 @@
     "frequency",
     "recency_days",
     "avg_delay_days",
-    "current_month_coef",
-    "avg_seasonal_coef"
+    "cat_quarterly_coef"
   ],
-  "n_features": 11,
-  "best_iteration": 93,
+  "n_features": 10,
+  "best_iteration": 89,
   "n_training_positives": 37424,
   "metrics_continuous": {
-    "mae": 6.537251792907931,
-    "rmse": 28.52111916775334,
+    "mae": 6.544646947184098,
+    "rmse": 28.160678477521788,
     "mae_baseline": 7.139869782509443,
     "rmse_baseline": 30.869602145805594,
-    "improvement_mae_pct": 8.440181795440402,
-    "improvement_rmse_pct": 7.607752658941713
+    "improvement_mae_pct": 8.336606317155312,
+    "improvement_rmse_pct": 8.775376033318526
   },
   "metrics_rounded": {
-    "mae": 6.528779825850956,
-    "rmse": 28.51770154030907,
+    "mae": 6.52900599344114,
+    "rmse": 28.16273929600118,
     "mae_baseline": 7.139869782509443,
     "rmse_baseline": 30.869602145805594,
-    "improvement_mae_pct": 8.558838960277342,
-    "improvement_rmse_pct": 7.6188238331930975
+    "improvement_mae_pct": 8.55567128919827,
+    "improvement_rmse_pct": 8.768700150455965
   },
   "train_clients": 356,
   "test_clients": 102,
