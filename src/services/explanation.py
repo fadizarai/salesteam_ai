@@ -61,38 +61,36 @@ def _get_cache_key(
     return hashlib.md5(raw_str.encode("utf-8")).hexdigest()
 
 
-def _call_huggingface_api(
+def _call_groq_api(
     prompt: str,
-    model: str = "meta-llama/Llama-3.3-70B-Instruct:fastest",
+    model: str = "llama-3.3-70b-versatile",
     max_tokens: int = 150,
 ) -> Optional[str]:
     """
-    Call the HuggingFace Router Inference API to generate explanation text.
+    Call the Groq API (LPU infrastructure) to generate explanation text.
 
-    Returns None on any error. Sets _quota_exhausted=True on HTTP 402 so that
+    Returns None on any error. Sets _quota_exhausted=True on HTTP 429 so that
     subsequent calls skip the HTTP round-trip and go straight to the fallback.
     """
     global _quota_exhausted
 
     if _quota_exhausted:
-        logger.debug("HuggingFace quota exhausted — skipping API call, using fallback.")
+        logger.debug("Groq quota exhausted — skipping API call, using fallback.")
         return None
 
-    token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_KEY")
+    token = os.getenv("GROQ_API_KEY")
     if not token or token.strip() == "":
-        logger.warning("No HuggingFace token found (HF_TOKEN or HUGGINGFACE_API_KEY). Using fallback.")
+        logger.warning("No Groq API key found (GROQ_API_KEY). Using fallback.")
         return None
 
-    api_url = "https://router.huggingface.co/v1/chat/completions"
+    api_url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
     payload = {
         "model": model,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
+        "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens,
         "temperature": 0.3,
         "top_p": 0.9,
@@ -104,20 +102,15 @@ def _call_huggingface_api(
             result = response.json()
             choices = result.get("choices", [])
             if choices:
-                text = choices[0].get("message", {}).get("content", "").strip()
-                return text
-            logger.error(f"Unexpected HuggingFace response format: {result}")
-        elif response.status_code == 402:
+                return choices[0].get("message", {}).get("content", "").strip()
+            logger.error(f"Unexpected Groq response format: {result}")
+        elif response.status_code == 429:
             _quota_exhausted = True
-            logger.warning(
-                "HuggingFace quota exhausted (HTTP 402). All subsequent LLM calls "
-                "will use the rule-based fallback until the server restarts or the "
-                "token is recharged. Recharge at https://huggingface.co/settings/billing"
-            )
+            logger.warning("Groq daily quota reached (1000 req/day) — fallback vers les règles.")
         else:
-            logger.error(f"HuggingFace API error {response.status_code}: {response.text}")
+            logger.error(f"Groq API error {response.status_code}: {response.text}")
     except Exception as e:
-        logger.error(f"Failed to call HuggingFace API: {e}", exc_info=True)
+        logger.error(f"Failed to call Groq API: {e}", exc_info=True)
 
     return None
 
@@ -236,10 +229,10 @@ def explain_suggestion(
             "Règle stricte: Retourne UNIQUEMENT l'explication, sans introduction, sans salutations, ni guillemets."
         )
 
-        llm_model = os.getenv("LLM_MODEL", "meta-llama/Llama-3.3-70B-Instruct:fastest") 
+        llm_model = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile") 
         max_tokens = int(os.getenv("LLM_MAX_TOKENS", "150"))
 
-        explanation = _call_huggingface_api(prompt, model=llm_model, max_tokens=max_tokens)
+        explanation = _call_groq_api(prompt, model=llm_model, max_tokens=max_tokens)
 
         if not explanation or len(explanation.strip()) < 10:
             raise ValueError("Réponse LLM vide ou invalide")
@@ -618,39 +611,12 @@ def explain_suggestion_detailed(context: dict) -> str:
     """
     prompt = _build_detailed_prompt(context)
 
-    llm_model = os.getenv("LLM_MODEL", "meta-llama/Llama-3.3-70B-Instruct:fastest")
+    llm_model = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
 
     try:
-        # Override temperature for the detailed call via a one-off payload
-        token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_KEY")
-        if not token or token.strip() == "":
-            raise ValueError("No HuggingFace token configured")
-
-        import requests as _requests
-        api_url = "https://router.huggingface.co/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": llm_model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 500,
-            "temperature": 0.4,
-            "top_p": 0.9,
-        }
-        response = _requests.post(api_url, json=payload, headers=headers, timeout=20)
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"HuggingFace API error {response.status_code}: {response.text[:200]}"
-            )
-        choices = response.json().get("choices", [])
-        if not choices:
-            raise ValueError("Empty choices in HuggingFace response")
-
-        explanation = choices[0].get("message", {}).get("content", "").strip()
-        if not explanation or len(explanation) < 50:
-            raise ValueError("LLM response too short to be valid")
+        explanation = _call_groq_api(prompt, model=llm_model, max_tokens=500)
+        if not explanation or len(explanation.strip()) < 50:
+            raise ValueError("Groq LLM response too short to be valid")
 
         logger.info(
             "explain_suggestion_detailed: LLM response (%d chars) for %s/%s",
