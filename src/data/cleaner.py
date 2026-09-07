@@ -68,9 +68,6 @@ def clean_lignes(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = df[col].astype(str).str.strip()
     df["categorie"] = df["categorie"].str.upper()
     
-    # Flag bulk orders
-    df["is_bulk_order"] = df["quantite"] > 1000
-    
     # Filter quantity outliers (quantite > 0)
     df = df[df["quantite"] > 0].copy()
     

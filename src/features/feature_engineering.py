@@ -75,10 +75,6 @@ def build_feature_matrix(
     g1["avg_delay_days"] = grp["date_diff"].mean().fillna(30.0)
     g1["recency_relative"] = g1["recency_days"] / g1["avg_delay_days"].replace(0, 30.0)
 
-    g1["societe"] = grp["societe"].first().values
-    company_map = {"LSAT": 0, "NEWTECH": 1, "ONETEL": 2}
-    g1["company_encoded"] = g1["societe"].map(company_map)
-
     def compute_trend(series):
         n = len(series)
         if n < 2:
@@ -110,14 +106,11 @@ def build_feature_matrix(
 
     g4 = df.groupby("code_article").agg(
         designation=("designation", "first"),
-        is_bulk_product=("is_bulk_order", "any"),
-        nb_clients=("code_client", "nunique"),
         first_order_date=("date_commande", "min")
     ).reset_index()
 
     g4 = g4.merge(prod_cat, on="code_article", how="left")
-    g4["days_since_first_order"] = (reference_date - g4["first_order_date"]).dt.days
-    g4["is_new_product"] = g4["days_since_first_order"] <= 90
+    g4["is_new_product"] = (reference_date - g4["first_order_date"]).dt.days <= 90
     g4 = g4.drop(columns=["first_order_date"])
 
     # Map cat_quarterly_coef on product category
@@ -149,11 +142,9 @@ def build_feature_matrix(
         "avg_qty", "median_qty", "std_qty", "min_qty", "max_qty", "total_qty",
         "frequency", "last_qty", "recency_days",
         "avg_delay_days", "recency_relative", "trend",
-        "company_encoded",
         "cat_quarterly_coef",
         "has_gps", "latitude", "longitude",
-        "categorie", "designation", "is_bulk_product",
-        "nb_clients", "days_since_first_order", "is_new_product",
+        "categorie", "designation", "is_new_product",
         "client_total_products", "client_total_invoices",
         "client_avg_basket_size"
     ]
@@ -178,7 +169,7 @@ def build_features_for_negative_pairs(
     client_features = (
         feature_matrix
         .drop_duplicates(subset=["code_client"])
-        [["code_client", "company_encoded", "has_gps", "latitude", "longitude",
+        [["code_client", "has_gps", "latitude", "longitude",
           "client_total_products", "client_total_invoices",
           "client_avg_basket_size"]]
     )
@@ -186,8 +177,8 @@ def build_features_for_negative_pairs(
     product_features = (
         feature_matrix
         .drop_duplicates(subset=["code_article"])
-        [["code_article", "categorie", "designation", "is_bulk_product",
-          "nb_clients", "days_since_first_order", "is_new_product", "cat_quarterly_coef"]]
+        [["code_article", "categorie", "designation",
+          "is_new_product", "cat_quarterly_coef"]]
     )
 
     neg = negative_pairs[["code_client", "code_article"]].copy()
@@ -212,11 +203,9 @@ def build_features_for_negative_pairs(
         "avg_qty", "std_qty", "min_qty", "max_qty", "total_qty",
         "frequency", "last_qty", "recency_days",
         "avg_delay_days", "recency_relative", "trend",
-        "company_encoded",
         "cat_quarterly_coef",
         "has_gps", "latitude", "longitude",
-        "categorie", "designation", "is_bulk_product",
-        "nb_clients", "days_since_first_order", "is_new_product",
+        "categorie", "designation", "is_new_product",
         "client_total_products", "client_total_invoices",
         "client_avg_basket_size"
     ]

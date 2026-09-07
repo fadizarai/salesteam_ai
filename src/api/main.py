@@ -16,6 +16,7 @@ load_dotenv()
 
 from src.api.routes import recommend, feedback, admin, clients
 from src.api.schemas import HealthResponse
+from src.services.recommendation import ensure_models_loaded, get_models_status
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,6 +28,8 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("SalesTeam AI API starting...")
+    ensure_models_loaded()  # raises and stops startup if classifier/encoder missing
+    logger.info("Models loaded successfully — API ready.")
     yield
     logger.info("SalesTeam AI API stopped.")
 
@@ -54,9 +57,10 @@ app.include_router(admin.router,     prefix="/api", tags=["Admin"])
 
 @app.get("/health", response_model=HealthResponse)
 async def health():
+    status = get_models_status()
     return HealthResponse(
-        status="healthy",
+        status="healthy" if status["classifier_loaded"] and status["encoder_loaded"] else "degraded",
         version="1.0.0",
-        models_loaded=True,
+        models_loaded=status["classifier_loaded"] and status["encoder_loaded"],
         timestamp=datetime.now().isoformat(),
     )

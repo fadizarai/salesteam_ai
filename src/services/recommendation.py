@@ -104,6 +104,32 @@ def _get_artifacts():
     return _model, _regressor, _encoder
 
 
+def get_models_status() -> dict:
+    """
+    Returns the current in-memory load status of ML artifacts.
+    Read-only — does not trigger loading.
+    """
+    return {
+        "classifier_loaded": _model is not None,
+        "regressor_loaded": _regressor is not None,
+        "encoder_loaded": _encoder is not None,
+    }
+
+
+def ensure_models_loaded() -> bool:
+    """
+    Eagerly loads classifier + encoder (required) and regressor (optional)
+    at API startup. Raises if the required artifacts can't be loaded,
+    so the server fails fast instead of starting in a broken state.
+    """
+    model, regressor, encoder = _get_artifacts()  # let FileNotFoundError propagate
+    if model is None or encoder is None:
+        raise RuntimeError("Classifier or encoder failed to load.")
+    if regressor is None:
+        logger.warning("Regressor not loaded — quantities will fall back to ceil(avg_qty).")
+    return True
+
+
 def _get_dataset():
     global _df_data
     if _df_data is None:

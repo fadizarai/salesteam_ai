@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SalesTeam AI — Visualisation de l'Architecture</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            background-color: #0d1117;
+            color: #c9d1d9;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 30px 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+        h1 {
+            font-size: 26px;
+            color: #58a6ff;
+            margin: 0 0 8px 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+        p {
+            color: #8b949e;
+            font-size: 14px;
+            margin: 0;
+        }
+        .container {
+            width: 100%;
+            max-width: 1100px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            overflow-x: auto;
+            display: flex;
+            justify-content: center;
+        }
+        .mermaid {
+            width: 100%;
+            display: flex;
+            justify-content: center;
+        }
+        .mermaid svg {
+            max-width: 100% !important;
+            height: auto !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🗺️ Cartographie Globale des Dépendances & Architecture</h1>
+        <p>Projet SalesTeam AI — Du nettoyage de données à l'interface React</p>
+    </div>
+
+    <div class="container">
+        <pre class="mermaid">
+flowchart TD
+    subgraph S1 [1. Données Brutes & Nettoyage - src/data]
+        L["loader.py"] -->|Tables brutes fusionnées| CL["cleaner.py"]
+    end
+
+    subgraph S2 [2. Feature Engineering & Cible - src/features & src/models]
+        CL -->|commandes_clean, lignes_clean| FE["feature_engineering.py"]
+        CL -->|commandes_clean, lignes_clean| TB["target_builder.py"]
+        FE -->|cat_quarterly_index.json| TB
+    end
+
+    subgraph S3 [3. Entraînement des Modèles ML - src/models]
+        TB -->|training_set.csv| TC["train_classifier.py"]
+        TB -->|training_set.csv achats réels| TR["train_regressor.py"]
+        TR -.->|Étude seuil CV| CC["compare_cv_threshold.py"]
+    end
+
+    subgraph S4 [4. Services Métier & Inférence - src/services]
+        TC -->|classifier_lsat.joblib| REC["recommendation.py"]
+        TR -->|regressor_lsat.joblib| REC
+        FE -->|cat_quarterly_index.json| REC
+        REC -->|Demande explication| EXP["explanation.py"]
+        REC -->|Extraction contexte| DC["deep_context.py"]
+        DC -->|Historique & Rangs| EXP
+        FB_SERV["feedback.py"] -->|Enregistrement retours| RETRAIN[("Données ré-entraînement")]
+    end
+
+    subgraph S5 [5. API REST FastAPI - src/api]
+        SCH["schemas.py (Pydantic)"] --> R_REC["routes/recommend.py"]
+        SCH --> R_CLI["routes/clients.py"]
+        SCH --> R_FB["routes/feedback.py"]
+        SCH --> R_ADM["routes/admin.py"]
+        
+        R_REC --> REC
+        R_CLI --> REC
+        R_FB --> FB_SERV
+        R_ADM --> REC
+        
+        MAIN["main.py (FastAPI App)"] --> R_REC
+        MAIN --> R_CLI
+        MAIN --> R_FB
+        MAIN --> R_ADM
+    end
+
+    subgraph S6 [6. Frontend Web Commercial - frontend/src]
+        MAIN -.->|API REST HTTP/JSON| APP["App.jsx (React)"]
+        APP --> MAIN_JSX["main.jsx"]
+        APP --> CSS["App.css / index.css"]
+    end
+        </pre>
+    </div>
+
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'dark',
+            themeVariables: {
+                primaryColor: '#1f6feb',
+                primaryTextColor: '#f0f6fc',
+                primaryBorderColor: '#388bfd',
+                lineColor: '#58a6ff',
+                secondaryColor: '#21262d',
+                tertiaryColor: '#161b22',
+                background: '#0d1117',
+                mainBkg: '#21262d',
+                nodeBorder: '#388bfd',
+                clusterBkg: '#161b22',
+                clusterBorder: '#30363d',
+                titleColor: '#58a6ff',
+                edgeLabelBackground: '#0d1117',
+                textColor: '#c9d1d9'
+            },
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: 'basis'
+            }
+        });
+    </script>
+</body>
+</html>
